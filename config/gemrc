@@ -1,0 +1,7 @@
+---
+:sources:
+- https://mirrors.cloud.tencent.com/rubygems/
+:update_sources: true
+:backtrace: false
+:bulk_threshold: 1000
+gem: --no-document
