@@ -300,10 +300,17 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
 
 ### ENVIRONMENT MANAGER ###
 
-# The independent environment-manager release is supplied as a named build
-# context. scripts/sandbox-image.sh verifies its repository-pinned SHA-256 before
-# invoking BuildKit; the final stage verifies it again after COPY.
-FROM environment_manager AS environment_manager_source
+# The independent environment-manager release is consumed from its immutable
+# OCI image. versions.env pins the platform manifest; the final stage additionally
+# verifies the copied binary bytes.
+FROM --platform=${SANDBOX_PLATFORM} environment_manager AS environment_manager_source
+
+### RCLONE FILESTORE ###
+
+# rclone-filestore is independently built and consumed from an immutable OCI
+# image context. The registry location is supplied by the builder; versions.env
+# pins the accepted linux/amd64 manifest and payload bytes.
+FROM --platform=${SANDBOX_PLATFORM} rclone_filestore AS rclone_filestore_source
 
 ### FINAL RUNTIME IMAGE ###
 
@@ -330,8 +337,10 @@ ARG RUBY_VERSION
 ARG CLAUDE_VERSION
 ARG MAVEN_VERSION
 ARG GRADLE_VERSION
+ARG ENVIRONMENT_MANAGER_IMAGE_DIGEST
 ARG ENVIRONMENT_MANAGER_REVISION
 ARG ENVIRONMENT_MANAGER_VERSION
+ARG RCLONE_FILESTORE_IMAGE_DIGEST
 ENV HOME=/home/user \
     VIRTUAL_ENV=/home/user/.local/share/oma/python \
     JAVA_HOME=/opt/java/current \
@@ -394,7 +403,8 @@ COPY --from=tool_assets /opt/tools/bin/ /usr/local/bin/
 COPY --from=tool_assets /opt/maven/ /opt/maven/
 COPY --from=tool_assets /opt/gradle/ /opt/gradle/
 COPY --from=claude_asset /opt/claude-code/ /opt/claude-code/
-COPY --from=environment_manager_source /environment-manager /opt/env-runner/environment-manager
+COPY --from=environment_manager_source /usr/local/bin/environment-manager /opt/env-runner/environment-manager
+COPY --from=rclone_filestore_source /opt/rclone/rclone-filestore /opt/rclone/rclone-filestore
 
 ### PACKAGE MANAGER, SUDO, AND SHELL CONFIGURATION ###
 
@@ -415,11 +425,13 @@ COPY versions.env /etc/oma-sandbox-versions.env
 ### RUNTIME LINKS, USERS, AND SHARED DIRECTORIES ###
 
 ARG ENVIRONMENT_MANAGER_SHA256
+ARG RCLONE_FILESTORE_SHA256
 RUN test -n "$ENVIRONMENT_MANAGER_SHA256" \
     && echo "${ENVIRONMENT_MANAGER_SHA256}  /opt/env-runner/environment-manager" | sha256sum --check --strict \
+    && echo "${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore" | sha256sum --check --strict \
     && chmod 0440 /etc/sudoers.d/user /etc/sudoers.d/claude \
     && chmod 0644 /etc/profile.d/oma-sandbox.sh \
-    && chmod 0755 /opt/env-runner/environment-manager /usr/local/bin/verify-sandbox-contract \
+    && chmod 0755 /opt/env-runner/environment-manager /opt/rclone/rclone-filestore /usr/local/bin/verify-sandbox-contract \
     && ln -s /opt/env-runner/environment-manager /usr/local/bin/environment-manager \
     && ln -s /opt/claude-code/bin/claude /usr/local/bin/claude \
     && ln -s "${PYTHON_VERSION}" /opt/python/current \
@@ -528,8 +540,10 @@ LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
       ai.superduck.oma.sandbox.runtime-revision="${RUNTIME_REVISION}" \
       ai.superduck.oma.sandbox.recipe-revision="${CODEX_UNIVERSAL_RECIPE_REVISION}" \
       ai.superduck.oma.sandbox.claude-version="${CLAUDE_VERSION}" \
+      ai.superduck.oma.sandbox.environment-manager-image-digest="${ENVIRONMENT_MANAGER_IMAGE_DIGEST}" \
       ai.superduck.oma.sandbox.environment-manager-revision="${ENVIRONMENT_MANAGER_REVISION}" \
-      ai.superduck.oma.sandbox.environment-manager-version="${ENVIRONMENT_MANAGER_VERSION}"
+      ai.superduck.oma.sandbox.environment-manager-version="${ENVIRONMENT_MANAGER_VERSION}" \
+      ai.superduck.oma.sandbox.rclone-filestore-image-digest="${RCLONE_FILESTORE_IMAGE_DIGEST}"
 
 ### DEFAULT COMMAND ###
 

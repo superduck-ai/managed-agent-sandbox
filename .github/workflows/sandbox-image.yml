@@ -55,8 +55,6 @@ jobs:
       packages: write
     env:
       IMAGE_REF: ghcr.io/${{ github.repository }}:${{ github.sha }}
-      ENVIRONMENT_MANAGER_URL: ${{ secrets.ENVIRONMENT_MANAGER_ARTIFACT_URL }}
-      ENVIRONMENT_MANAGER_TOKEN: ${{ secrets.ENVIRONMENT_MANAGER_ARTIFACT_TOKEN }}
     outputs:
       image-digest: ${{ steps.identity.outputs.digest }}
     steps:
@@ -68,23 +66,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - name: Download and verify Environment Manager artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$ENVIRONMENT_MANAGER_URL" || { echo "ENVIRONMENT_MANAGER_ARTIFACT_URL secret is required" >&2; exit 1; }
-          source versions.env
-          auth_args=()
-          if [[ -n "$ENVIRONMENT_MANAGER_TOKEN" ]]; then
-            auth_args=(-H "Authorization: Bearer $ENVIRONMENT_MANAGER_TOKEN")
-          fi
-          curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 "${auth_args[@]}" "$ENVIRONMENT_MANAGER_URL" -o /tmp/environment-manager
-          echo "$ENVIRONMENT_MANAGER_SHA256  /tmp/environment-manager" | sha256sum --check --strict
-          chmod 0755 /tmp/environment-manager
-
       - name: Build linux/amd64 image into the local daemon
         env:
-          ENVIRONMENT_MANAGER_BINARY: /tmp/environment-manager
           SANDBOX_IMAGE_TAG: ${{ env.IMAGE_REF }}
           SANDBOX_BUILDX_CACHE_FROM: type=gha,scope=sandbox-base
           SANDBOX_BUILDX_CACHE_TO: type=gha,scope=sandbox-base,mode=max

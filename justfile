@@ -5,7 +5,7 @@ sandbox-image-check:
   ./scripts/sandbox-image.sh verify-source
   ./scripts/sandbox-image.sh check
 
-# Build the linux/amd64 image. ENVIRONMENT_MANAGER_BINARY must match versions.env.
+# Build linux/amd64 from the pinned Environment Manager and rclone-filestore OCI inputs.
 sandbox-image-build:
   ./scripts/sandbox-image.sh build
 

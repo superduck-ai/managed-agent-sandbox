@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../versions.env
 source "$ROOT_DIR/versions.env"
 
+ENVIRONMENT_MANAGER_IMAGE_REF="${OMA_ARTIFACT_REGISTRY}/environment-manager@${ENVIRONMENT_MANAGER_IMAGE_DIGEST}"
+RCLONE_FILESTORE_IMAGE_REF="${OMA_ARTIFACT_REGISTRY}/rclone-filestore@${RCLONE_FILESTORE_IMAGE_DIGEST}"
+
 # Every Docker build value that can affect the published runtime is loaded from
 # versions.env. Dockerfile ARG declarations intentionally have no defaults, so
 # this wrapper and the copied in-image contract cannot silently diverge.
@@ -20,7 +23,9 @@ SANDBOX_BUILD_ARG_NAMES=(
   YARN_VERSION YARN_TARBALL_URL YARN_SHA256 PNPM_VERSION PNPM_TARBALL_URL PNPM_SHA256
   MAVEN_VERSION MAVEN_SHA512 GRADLE_VERSION GRADLE_SHA256
   COMPOSER_VERSION COMPOSER_SHA256 DOCKER_CLI_VERSION DOCKER_CLI_SHA256
-  ENVIRONMENT_MANAGER_SHA256 ENVIRONMENT_MANAGER_REVISION ENVIRONMENT_MANAGER_VERSION
+  ENVIRONMENT_MANAGER_IMAGE_DIGEST ENVIRONMENT_MANAGER_SHA256
+  ENVIRONMENT_MANAGER_REVISION ENVIRONMENT_MANAGER_VERSION
+  RCLONE_FILESTORE_IMAGE_DIGEST RCLONE_FILESTORE_SHA256
 )
 
 SANDBOX_BUILD_ARGS=()
@@ -46,9 +51,12 @@ metadata() {
     "ubuntu_snapshot_timestamp=$UBUNTU_SNAPSHOT_TIMESTAMP" \
     "runtime_revision=$RUNTIME_REVISION" \
     "codex_universal_recipe_revision=$CODEX_UNIVERSAL_RECIPE_REVISION" \
+    "environment_manager_image_digest=$ENVIRONMENT_MANAGER_IMAGE_DIGEST" \
     "environment_manager_revision=$ENVIRONMENT_MANAGER_REVISION" \
     "environment_manager_version=$ENVIRONMENT_MANAGER_VERSION" \
     "environment_manager_sha256=$ENVIRONMENT_MANAGER_SHA256" \
+    "rclone_filestore_image_digest=$RCLONE_FILESTORE_IMAGE_DIGEST" \
+    "rclone_filestore_sha256=$RCLONE_FILESTORE_SHA256" \
     "python=$PYTHON_VERSION" \
     "node=$NODE_VERSION" \
     "go=$GO_VERSION" \
@@ -105,13 +113,23 @@ verify_sha256_value() {
   }
 }
 
+verify_oci_image_digest() {
+  local name="$1"
+  local value="${!name:-}"
+
+  [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    printf 'source contract failed: %s is not an OCI SHA-256 digest\n' "$name" >&2
+    return 1
+  }
+}
+
 verify_curl_retry_policy() {
   local file="$1"
   local curl_count retry_count
 
   curl_count="$(grep -Ec '(^[[:space:]]*|RUN[[:space:]]+|&&[[:space:]]+)curl[[:space:]]+-' "$file" || true)"
   retry_count="$(grep -Ec 'curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15([[:space:]]|$)' "$file" || true)"
-  [[ "$curl_count" -gt 0 && "$retry_count" == "$curl_count" ]] || {
+  [[ "$retry_count" == "$curl_count" ]] || {
     printf 'source contract failed: %s has %s curl downloads but %s complete retry policies\n' \
       "$file" "$curl_count" "$retry_count" >&2
     return 1
@@ -285,7 +303,8 @@ verify_source() {
   }
 
   require_literal "$dockerfile" 'ARG SANDBOX_PLATFORM'
-  require_literal "$dockerfile" 'FROM environment_manager AS environment_manager_source'
+  require_literal "$dockerfile" 'FROM --platform=${SANDBOX_PLATFORM} environment_manager AS environment_manager_source'
+  require_literal "$dockerfile" 'FROM --platform=${SANDBOX_PLATFORM} rclone_filestore AS rclone_filestore_source'
   require_literal "$dockerfile" 'USER root'
   require_literal "$dockerfile" 'ENV HOME=/root'
   require_literal "$dockerfile" 'WORKDIR /home/user'
@@ -303,7 +322,9 @@ verify_source() {
   require_literal "$dockerfile" 'MAVEN_ARGS="-s /home/user/.m2/settings.xml"'
   require_literal "$dockerfile" 'GRADLE_USER_HOME=/home/user/.gradle'
   require_literal "$dockerfile" 'COMPOSER_HOME=/home/user/.config/composer'
-  require_literal "$dockerfile" 'COPY --from=environment_manager_source /environment-manager /opt/env-runner/environment-manager'
+  require_literal "$dockerfile" 'COPY --from=environment_manager_source /usr/local/bin/environment-manager /opt/env-runner/environment-manager'
+  require_literal "$dockerfile" 'COPY --from=rclone_filestore_source /opt/rclone/rclone-filestore /opt/rclone/rclone-filestore'
+  require_literal "$dockerfile" '${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore'
   require_literal "$dockerfile" 'ln -s /opt/env-runner/environment-manager /usr/local/bin/environment-manager'
   require_literal "$dockerfile" 'ln -s /opt/claude-code/bin/claude /usr/local/bin/claude'
   require_literal "$dockerfile" 'ln -sf "/usr/bin/gcc-${GCC_MAJOR}" /usr/local/bin/cc'
@@ -319,11 +340,15 @@ verify_source() {
   require_literal "$verifier" 'getent passwd claude'
   require_literal "$verifier" 'assert_writable_dir "$shared_dir"'
   require_literal "$verifier" "assert_output_equals '/opt/env-runner/environment-manager' readlink /usr/local/bin/environment-manager"
+  require_literal "$verifier" 'provision-packages --protocol v1 --stdin'
+  require_literal "$verifier" 'assert_environment_manager_provisions_packages'
+  require_literal "$verifier" 'assert_environment_manager_stops_after_first_failure'
   require_literal "$verifier" 'assert_cargo_builds'
   require_literal "$verifier" 'assert_yarn_uses_npmmirror'
   require_literal "$verifier" 'assert_bun_uses_npmmirror'
   require_literal "$verifier" 'assert_bundler_uses_mirror'
-  require_literal "$verifier" 'task-run --help'
+  require_literal "$verifier" 'assert_environment_manager_help_flags task-run'
+  require_literal "$verifier" 'assert_environment_manager_help_flags provision-packages'
   require_literal "$bundler_config" 'BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/: "https://mirrors.cloud.tencent.com/rubygems/"'
   reject_literal "$bundler_config" 'FALLBACK_TIMEOUT'
   require_literal "$gemrc" 'https://mirrors.cloud.tencent.com/rubygems/'
@@ -357,7 +382,7 @@ verify_source() {
   for checksum_name in \
     PYTHON_SHA256 NODE_SHA256 GO_SHA256 JAVA_SHA256 PHP_SHA256 BUN_SHA256 \
     RUST_SHA256 RUBY_SHA256 CLAUDE_SHA256 UV_SHA256 YARN_SHA256 PNPM_SHA256 \
-    GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256; do
+    GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256 RCLONE_FILESTORE_SHA256; do
     verify_sha256_value "$checksum_name"
   done
 
@@ -377,6 +402,15 @@ verify_source() {
     printf 'source contract failed: ENVIRONMENT_MANAGER_VERSION is invalid\n' >&2
     return 1
   }
+  verify_oci_image_digest ENVIRONMENT_MANAGER_IMAGE_DIGEST
+  verify_oci_image_digest RCLONE_FILESTORE_IMAGE_DIGEST
+  [[ "$OMA_ARTIFACT_REGISTRY" == */* \
+      && "$OMA_ARTIFACT_REGISTRY" != */ \
+      && "$OMA_ARTIFACT_REGISTRY" != *[[:space:]@]* \
+      && "$OMA_ARTIFACT_REGISTRY" != *://* ]] || {
+    printf 'source contract failed: OMA_ARTIFACT_REGISTRY is not a registry namespace\n' >&2
+    return 1
+  }
   [[ "$TARGET_IMAGE_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]] || {
     printf 'source contract failed: TARGET_IMAGE_SIZE_BYTES is not a positive integer\n' >&2
     return 1
@@ -387,15 +421,11 @@ verify_source() {
 }
 
 check_dockerfile() (
-  local manager_context
-  manager_context="$(mktemp -d)"
-  trap 'rm -rf "$manager_context"' EXIT
-  : > "$manager_context/environment-manager"
-
   docker buildx build \
     --check \
     --platform "$SANDBOX_PLATFORM" \
-    --build-context "environment_manager=$manager_context" \
+    --build-context "environment_manager=$ROOT_DIR" \
+    --build-context "rclone_filestore=$ROOT_DIR" \
     "${SANDBOX_BUILD_ARGS[@]}" \
     "$ROOT_DIR"
 )
@@ -423,37 +453,18 @@ image_file_sha256() {
 }
 
 build_image() (
-  local manager_binary="${ENVIRONMENT_MANAGER_BINARY:-}"
-  local manager_sha256="$ENVIRONMENT_MANAGER_SHA256"
   local image_tag="${SANDBOX_IMAGE_TAG:-ghcr.io/superduck-ai/managed-agent-sandbox:local}"
   local image_output="${SANDBOX_IMAGE_OUTPUT:-load}"
   local metadata_file="${SANDBOX_IMAGE_METADATA_FILE:-}"
   local cache_from="${SANDBOX_BUILDX_CACHE_FROM:-}"
   local cache_to="${SANDBOX_BUILDX_CACHE_TO:-}"
 
-  [[ -n "$manager_binary" ]] || {
-    printf 'ENVIRONMENT_MANAGER_BINARY is required\n' >&2
-    return 2
-  }
-  [[ -f "$manager_binary" ]] || {
-    printf 'environment-manager binary not found: %s\n' "$manager_binary" >&2
-    return 2
-  }
-  [[ "$(sha256_file "$manager_binary")" == "$manager_sha256" ]] || {
-    printf 'environment-manager checksum mismatch; expected pinned %s\n' "$manager_sha256" >&2
-    return 2
-  }
   [[ "$image_output" == "load" || "$image_output" == "push" ]] || {
     printf 'SANDBOX_IMAGE_OUTPUT must be load or push\n' >&2
     return 2
   }
 
   verify_source
-
-  local manager_context
-  manager_context="$(mktemp -d)"
-  trap 'rm -rf "$manager_context"' EXIT
-  install -m 0755 "$manager_binary" "$manager_context/environment-manager"
 
   local output_flag="--load"
   if [[ "$image_output" == "push" ]]; then
@@ -474,7 +485,8 @@ build_image() (
 
   docker buildx build \
     --platform "$SANDBOX_PLATFORM" \
-    --build-context "environment_manager=$manager_context" \
+    --build-context "environment_manager=docker-image://$ENVIRONMENT_MANAGER_IMAGE_REF" \
+    --build-context "rclone_filestore=docker-image://$RCLONE_FILESTORE_IMAGE_REF" \
     "${SANDBOX_BUILD_ARGS[@]}" \
     --tag "$image_tag" \
     "$output_flag" \

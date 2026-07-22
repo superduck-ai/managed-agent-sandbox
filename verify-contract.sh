@@ -25,6 +25,19 @@ assert_output_equals() {
   [[ "$output" == "$expected" ]] || fail "$* output is not exactly $expected: $output"
 }
 
+assert_environment_manager_help_flags() {
+  local subcommand="$1"
+  shift
+  local flag help_output
+
+  help_output="$(/usr/local/bin/environment-manager "$subcommand" --help 2>&1)" || \
+    fail "environment-manager $subcommand help failed"
+  for flag in "$@"; do
+    grep -Fq -- "$flag" <<<"$help_output" || \
+      fail "environment-manager $subcommand is missing $flag"
+  done
+}
+
 assert_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
 }
@@ -109,6 +122,80 @@ assert_bundler_uses_mirror() {
   grep -Fq 'HTTP GET https://mirrors.cloud.tencent.com/rubygems/' <<<"$output" || \
     fail "Bundler did not request the configured mirror"
   ! grep -Fq 'HTTP GET https://rubygems.org/' <<<"$output" || fail "Bundler requested rubygems.org"
+}
+
+assert_environment_manager_provisions_packages() {
+  local probe_dir stdout_file stderr_file
+  probe_dir="$(mktemp -d)"
+  stdout_file="$probe_dir/stdout"
+  stderr_file="$probe_dir/stderr"
+
+  if ! /usr/local/bin/environment-manager provision-packages --protocol v1 --stdin \
+    >"$stdout_file" 2>"$stderr_file" <<'JSON'
+{"version":1,"packages":{"type":"packages","apt":["shellcheck"],"cargo":["ripgrep@14.1.1"],"gem":["rake:13.2.1"],"go":["golang.org/x/tools/cmd/stringer@v0.35.0"],"npm":["is-number@7.0.0"],"pip":["six==1.17.0"]}}
+JSON
+  then
+    fail "environment-manager provision-packages failed: stdout=$(<"$stdout_file") stderr=$(<"$stderr_file")"
+  fi
+
+  [[ "$(wc -l <"$stdout_file")" -eq 1 ]] || fail "provision-packages stdout is not one JSON line"
+  [[ ! -s "$stderr_file" ]] || fail "provision-packages wrote stderr: $(<"$stderr_file")"
+  jq -e '
+    .version == 1 and
+    .status == "succeeded" and
+    .package_count == 6 and
+    (.duration_ms | type == "number" and . >= 0) and
+    (keys | sort == ["duration_ms", "package_count", "status", "version"])
+  ' "$stdout_file" >/dev/null || fail "provision-packages returned an invalid success result: $(<"$stdout_file")"
+
+  assert_command shellcheck
+  [[ -x /home/user/.cargo/bin/rg ]] || fail "cargo package is not visible"
+  gem list --local --exact rake --version 13.2.1 | grep -Fq 'rake (13.2.1)' || fail "gem package is not visible"
+  [[ -x /home/user/go/bin/stringer ]] || fail "go package is not visible"
+  node -e 'require("is-number")' || fail "npm package is not visible"
+  python -c 'import six; assert six.__version__ == "1.17.0"' || fail "pip package is not visible"
+
+  rm -rf "$probe_dir"
+}
+
+assert_environment_manager_stops_after_first_failure() {
+  local process_exit_code probe_dir stderr_file stdout_file
+  local npm_marker=/home/claude/.npm-global/lib/node_modules/is-odd
+  probe_dir="$(mktemp -d)"
+  stdout_file="$probe_dir/stdout"
+  stderr_file="$probe_dir/stderr"
+
+  [[ ! -e "$npm_marker" ]] || fail "first-failure npm marker already exists"
+  if /usr/local/bin/environment-manager provision-packages --protocol v1 --stdin \
+    >"$stdout_file" 2>"$stderr_file" <<'JSON'
+{"version":1,"packages":{"type":"packages","apt":["oma-sandbox-contract-intentionally-missing-package-7f4d9a"],"npm":["is-odd@3.0.1"]}}
+JSON
+  then
+    fail "environment-manager accepted an intentionally missing apt package"
+  else
+    process_exit_code=$?
+  fi
+
+  [[ "$process_exit_code" -eq 10 ]] || \
+    fail "first Package Manager failure exited $process_exit_code instead of 10"
+  [[ "$(wc -l <"$stdout_file")" -eq 1 ]] || fail "failed provision-packages stdout is not one JSON line"
+  jq -e '
+    .version == 1 and
+    .status == "failed" and
+    .category == "package_manager" and
+    .manager == "apt" and
+    .stage == "install" and
+    .package_count == 2 and
+    (.duration_ms | type == "number" and . >= 0) and
+    (.exit_code | type == "number" and . > 0) and
+    (keys | sort == ["category", "duration_ms", "exit_code", "manager", "package_count", "stage", "status", "version"])
+  ' "$stdout_file" >/dev/null || fail "provision-packages returned an invalid failure result: $(<"$stdout_file")"
+  ! grep -Fq 'oma-sandbox-contract-intentionally-missing-package-7f4d9a' "$stderr_file" || \
+    fail "provision-packages stderr leaked the failed apt spec"
+  ! grep -Fq 'is-odd@3.0.1' "$stderr_file" || fail "provision-packages stderr leaked the skipped npm spec"
+  [[ ! -e "$npm_marker" ]] || fail "npm ran after the apt failure"
+
+  rm -rf "$probe_dir"
 }
 
 VERSIONS_FILE=/etc/oma-sandbox-versions.env
@@ -258,10 +345,15 @@ assert_output_equals "${CLAUDE_VERSION} (Claude Code)" sudo -n -H -u claude /opt
 assert_output_equals '/opt/env-runner/environment-manager' readlink /usr/local/bin/environment-manager
 assert_output_contains "environment-runner version ${ENVIRONMENT_MANAGER_VERSION}" /usr/local/bin/environment-manager --version
 assert_output_contains "environment-runner version ${ENVIRONMENT_MANAGER_VERSION}" sudo -n -H -u claude /usr/local/bin/environment-manager --version
-manager_task_help="$(/usr/local/bin/environment-manager task-run --help 2>&1)" || fail "environment-manager task-run help failed"
-for manager_flag in --session --session-mode --local-testing --claude-agent-version --claude-path; do
-  grep -Fq -- "$manager_flag" <<<"$manager_task_help" || fail "environment-manager task-run is missing $manager_flag"
-done
+[[ -x /opt/rclone/rclone-filestore ]] || fail "rclone-filestore payload is not executable"
+assert_output_equals \
+  "${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore" \
+  sha256sum /opt/rclone/rclone-filestore
+assert_environment_manager_help_flags task-run \
+  --session --session-mode --local-testing --claude-agent-version --claude-path
+assert_environment_manager_help_flags provision-packages --protocol --stdin
+assert_environment_manager_provisions_packages
+assert_environment_manager_stops_after_first_failure
 
 for command_name in cc c++ make sqlite3 psql redis-cli git curl wget jq tar zip unzip ssh scp tmux screen rg tree htop sed awk grep vim nano diff patch docker; do
   assert_command "$command_name"
