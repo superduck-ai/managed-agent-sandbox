@@ -8,15 +8,40 @@
 
 构建期 APT 统一读取 `versions.env` 固定时间点的 Ubuntu 官方 snapshot，避免滚动镜像索引使固定的 GCC/G++ 包版本突然不可解析；最终镜像会把 APT source 恢复为 TUNA，供运行时 `packages.apt` 使用。用于启动 TLS 的 curl CA extract 使用带日期的不可变 URL 和 SHA-256，Composer 则直接下载带版本路径的 `composer.phar` 并校验 SHA-256，不执行可变的在线 installer。Yarn 和 pnpm 同样使用 `versions.env` 固定的 npmmirror tarball URL 与 SHA-256，校验后直接解包到 `/home/claude/.npm-global`；构建不再通过 `npm install` 接受 registry 当次返回的 metadata 或同版本不同字节。
 
-该文件同时固定 Ubuntu AMD64 manifest 和干净的 Environment Manager 制品身份。独立拥有的 Environment Manager 不会提交到本仓库。请提供字节内容与固定 SHA-256 匹配的 Linux AMD64 二进制文件：
+该文件同时固定 Ubuntu AMD64 manifest、Environment Manager 和
+`rclone-filestore` OCI 制品身份。两个独立拥有的二进制都不会提交到本仓库。
+`OMA_ARTIFACT_REGISTRY` 配置制品所在的 Registry namespace，两个制品分别固定
+Linux AMD64 platform manifest Digest、版本和二进制 SHA-256。
+
+当前制品 namespace 为 `registry.gz.cvte.cn/oma`，构建脚本会自动组成两个不可变
+OCI 引用。完成 Registry 登录后，可以直接构建：
 
 ```console
-ENVIRONMENT_MANAGER_BINARY=/absolute/path/environment-manager \
 SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local \
 just sandbox-image-build
 ```
 
-允许使用的制品由干净源码 revision `1e719698d8fdb84500bd0c6b356914a4800312e6`（`vcs.modified=false`）构建，SHA-256 为 `f9823cdc138628891427113817a760f299868e1df9aa45b94a775fb113747045`。wrapper 会在 BuildKit 启动前验证仓库固定的 hash，Dockerfile 会再次验证复制到 `/opt/env-runner/environment-manager` 的字节，并通过 `/usr/local/bin/environment-manager` 符号链接保留命令合同。运行时合同还要求版本为 `environment-runner version 1e71969`，并执行其 `task-run` v0 启动路径。CI 通过 `ENVIRONMENT_MANAGER_ARTIFACT_URL` 和可选的 `ENVIRONMENT_MANAGER_ARTIFACT_TOKEN` secret 使用完全一致的制品；由于校验和既不是 secret，也不能由调用方覆盖，因此该 URL 无法替换成不同字节。OMA 不会重新构建或修改 Environment Manager 项目。
+当前 Environment Manager 来自干净源码 revision
+`4a0b1c8818b3bf70a4b7320b4ebd80e8f62fe855`，版本为 `4a0b1c8`，
+二进制 SHA-256 为
+`6781f8a766b7004998f84dab5f5dae94dcd6bb0756294657c0fc5d5095ccf919`。
+BuildKit 从外部命名镜像上下文复制
+`/usr/local/bin/environment-manager`，Dockerfile 再次校验字节，并通过
+`/usr/local/bin/environment-manager` 符号链接保留命令合同。运行时合同保留
+`task-run` v0 启动路径，并通过 `provision-packages --protocol v1 --stdin`
+应用 OMA 下发的 Packages Manifest。
+
+`rclone-filestore` 以只包含该二进制的独立小型 OCI 制品发布，不再从旧版
+Sandbox 镜像复制。Sandbox 从第二个外部命名镜像上下文的
+`/opt/rclone/rclone-filestore` 复制到同一路径，固定二进制 SHA-256 为
+`b778c110432734a41131906a11c43373edefedd2c44ceb9d83e2e3ff923990f4`。
+该制品是动态链接的 Linux AMD64 ELF，只依赖目标镜像已有的 glibc，并要求
+运行节点支持 AMD64 v3 指令集。镜像合同验证文件存在、可执行权限和 SHA-256；
+真实 E2B 验收还必须启动该进程并验证 filestore mount ready 流程。
+
+CI 和本地构建读取完全相同的 `versions.env` 配置，不需要额外配置制品地址
+Secrets；执行构建的节点需要能够访问该 Registry。OMA 不会重新构建或修改这两个
+项目。
 
 所有远程运行时归档和固定的软件包管理器制品只有在与仓库校验和匹配后才会被接受。软件包管理器运行时默认使用国内 HTTPS 镜像，不会禁用 TLS 验证，也不会添加不安全的 trusted host。npm、pnpm 和 Yarn Classic 通过共享 `/etc/npmrc` 使用 npmmirror；Bun 通过 `BUN_CONFIG_REGISTRY` 显式使用同一来源。RubyGems 和 Bundler 分别读取共享 `.gemrc` 与 `BUNDLE_USER_CONFIG`，使用腾讯云 RubyGems 镜像；Bundler 不配置官方源 fallback。
 
@@ -28,7 +53,7 @@ just sandbox-image-build
 just sandbox-image-check
 ```
 
-完成构建后，验证镜像平台、测量未压缩 Docker 镜像大小，并强制检查默认 `root` 账户、`user`/`claude` 兼容账户、固定运行时版本、真实 Cargo 编译、软件包管理器、实用工具、镜像配置、Environment Manager、可直接调用的 `claude` 命令以及应排除的工具。Yarn、Bun 和 Bundler 的检查会在临时项目中执行最小依赖解析，以确认真实请求只到达配置的国内镜像，因此完整验证需要能够访问这些镜像：
+完成构建后，验证镜像平台、测量未压缩 Docker 镜像大小，并强制检查默认 `root` 账户、`user`/`claude` 兼容账户、固定运行时版本、真实 Cargo 编译、软件包管理器、实用工具、镜像配置、Environment Manager、可直接调用的 `claude` 命令以及应排除的工具。Environment Manager 合同会通过一个 v1 Manifest 真实安装 apt、cargo、gem、go、npm 和 pip Packages，检查每个安装结果在约定路径或 runtime 中可见，并通过确定性失败探针验证首错停止且不执行后续 Manager。Yarn、Bun 和 Bundler 的检查会在临时项目中执行最小依赖解析，以确认真实请求只到达配置的国内镜像，因此完整验证需要能够访问这些镜像：
 
 ```console
 SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local just sandbox-image-test
@@ -36,7 +61,7 @@ SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local just sandbox-
 
 由 containerd 支持的引擎可能会在新加载的层首次挂载并解包前暂时报告零大小，因此测量过程会先运行一个不执行实际操作的 `/bin/true` 容器。随后读取两次 `docker image history --human=false`，并拒绝不稳定结果。它从 `RootFS.Layers` 推导权威的非空文件系统层数（将 OCI 标准空 tar DiffID 计算在内），并要求 history 在汇总精确字节数前，恰好包含这么多非零大小条目。即使截断后的响应所含总条目数仍与 RootFS 层数一样多，这也能拒绝稳定截断。三 GiB（`3,221,225,472` 字节）是报告目标，而不是硬性验收限制：命令会输出 `size_target_status=at_or_below_target` 或 `size_target_status=above_target`，但不会因此拒绝其他方面均有效的镜像。`docker image inspect .Size` 会另外报告为 `storage_size_bytes`，因为由 containerd 支持的引擎可能会在这里暴露压缩后或存储实现特定的值；该值不能替代未压缩体积测量。执行 verifier 前，会先按 SHA-256 比较仓库当前 `versions.env` 与镜像内 `/etc/oma-sandbox-versions.env`，再比较仓库与镜像内 verifier。这样即使旧镜像自己的版本合同和 verifier 彼此一致，也无法针对较新的仓库合同假通过。
 
-2026-07-18 验证的最终本地构建为 `sha256:39a12caa2057ef88e98cda1b8163bc7cdc53708946f2667c5112e8e180fdc06f`，包含 `3,426,467,840` 字节的未压缩层数据，比 3 GiB 参考目标高 `205,242,368` 字节。对于同一个镜像，OrbStack 报告的存储大小为 `1,271,599,304` 字节。与只安装 `rustc`、Cargo 和标准库的旧构建相比，保留单版本 rustfmt、Clippy、rust-analyzer 和 LLVM tools 使未压缩镜像增加 `285,638,656` 字节（约 272.4 MiB）；随后加入 `claude` 兼容账号、两个 home 的共享权限、sudoers 及旧 Claude 目录布局合计只再增加 `40,960` 字节（40 KiB），其中恢复 npm/pip/状态目录和 Environment Manager 链接布局只比账号版本增加 `4,096` 字节。切换为 root、补充稳定的 `claude`/`cc`/`c++` 命令和对应合同验证后，未压缩数据相对上一版增加 `28,672` 字节；为 root 初始化 Claude 配置路径又增加 `4,096` 字节；引入镜像内版本合同和固定 runtime 的 `current` 链接后又增加 `32,768` 字节；把 Yarn/pnpm 从实时 `npm install` 改为仓库固定 tarball 后增加 `24,879,104` 字节（约 23.7 MiB）。这些实测成本被接受，不会触发硬性失败。
+2026-07-22 验证的最终本地构建为 `sha256:45393bda3b3f8e46db3798969ed0695825dfa51121f617a47eba7639ec3b7afa`，包含 `3,426,549,760` 字节的未压缩层数据，比 3 GiB 参考目标高 `205,324,288` 字节。对于同一个镜像，OrbStack 报告的存储大小为 `1,271,622,083` 字节。与只安装 `rustc`、Cargo 和标准库的旧构建相比，保留单版本 rustfmt、Clippy、rust-analyzer 和 LLVM tools 使未压缩镜像增加 `285,638,656` 字节（约 272.4 MiB）；随后加入 `claude` 兼容账号、两个 home 的共享权限、sudoers 及旧 Claude 目录布局合计只再增加 `40,960` 字节（40 KiB），其中恢复 npm/pip/状态目录和 Environment Manager 链接布局只比账号版本增加 `4,096` 字节。切换为 root、补充稳定的 `claude`/`cc`/`c++` 命令和对应合同验证后，未压缩数据相对上一版增加 `28,672` 字节；为 root 初始化 Claude 配置路径又增加 `4,096` 字节；引入镜像内版本合同和固定 runtime 的 `current` 链接后又增加 `32,768` 字节；把 Yarn/pnpm 从实时 `npm install` 改为仓库固定 tarball 后增加 `24,879,104` 字节（约 23.7 MiB）。更新 Environment Manager binary 并增加 Packages runtime 合同验证后，未压缩镜像再增加 `81,920` 字节（80 KiB），OrbStack 存储大小增加 `22,779` 字节。这些实测成本被接受，不会触发硬性失败。
 
 ## 构建与运行时性能
 
