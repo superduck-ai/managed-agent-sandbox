@@ -545,6 +545,3 @@ LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
       ai.superduck.oma.sandbox.environment-manager-version="${ENVIRONMENT_MANAGER_VERSION}" \
       ai.superduck.oma.sandbox.rclone-filestore-image-digest="${RCLONE_FILESTORE_IMAGE_DIGEST}"
 
-### DEFAULT COMMAND ###
-
-CMD ["sleep", "infinity"]
