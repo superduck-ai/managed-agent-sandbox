@@ -58,7 +58,7 @@ Secrets；执行构建的节点需要能够访问该 Registry。OMA 不会重新
 just sandbox-image-check
 ```
 
-完成构建后，验证镜像平台、测量未压缩 Docker 镜像大小，并强制检查默认 `root` 账户、`user`/`claude` 兼容账户、固定运行时版本、真实 Cargo 编译、软件包管理器、实用工具、镜像配置、Environment Manager、可直接调用的 `claude` 命令以及应排除的工具。Environment Manager 合同会通过一个 v1 Manifest 真实安装 apt、cargo、gem、go、npm 和 pip Packages，检查每个安装结果在约定路径或 runtime 中可见，并通过确定性失败探针验证首错停止且不执行后续 Manager。Yarn、Bun 和 Bundler 的检查会在临时项目中执行最小依赖解析，以确认真实请求只到达配置的国内镜像，因此完整验证需要能够访问这些镜像：
+完成构建后，验证镜像平台、测量未压缩 Docker 镜像大小，并强制检查默认 `root` 账户、`user`/`claude` 兼容账户、固定运行时版本、真实 Cargo 编译、软件包管理器、实用工具、镜像配置、envd 默认入口、Environment Manager、可直接调用的 `claude` 命令以及应排除的工具。Environment Manager 合同会通过一个 v1 Manifest 真实安装 apt、cargo、gem、go、npm 和 pip Packages，检查每个安装结果在约定路径或 runtime 中可见，并通过确定性失败探针验证首错停止且不执行后续 Manager。Yarn、Bun 和 Bundler 的检查会在临时项目中执行最小依赖解析，以确认真实请求只到达配置的国内镜像，因此完整验证需要能够访问这些镜像：
 
 ```console
 SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local just sandbox-image-test

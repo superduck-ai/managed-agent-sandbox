@@ -515,6 +515,36 @@ build_image() (
     "$ROOT_DIR"
 )
 
+verify_envd_health() (
+  local image_ref="$1"
+  local container_id health_status attempt
+
+  container_id="$(docker run --detach --platform "$SANDBOX_PLATFORM" "$image_ref")"
+  cleanup() {
+    docker rm --force "$container_id" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+
+  for ((attempt = 1; attempt <= 30; attempt++)); do
+    health_status="$(
+      docker exec "$container_id" \
+        curl --silent --output /dev/null --write-out '%{http_code}' \
+        http://127.0.0.1:49983/health 2>/dev/null || true
+    )"
+    if [[ "$health_status" == "204" ]]; then
+      return 0
+    fi
+    if [[ "$(docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null || true)" != "true" ]]; then
+      break
+    fi
+    sleep 1
+  done
+
+  printf 'envd health check failed: expected HTTP 204, got %s\n' "${health_status:-no response}" >&2
+  docker logs "$container_id" >&2 || true
+  return 1
+)
+
 test_image() {
   local image_ref="${1:-}"
 
@@ -611,6 +641,7 @@ test_image() {
   docker run --rm --platform "$SANDBOX_PLATFORM" \
     --entrypoint /usr/local/bin/verify-sandbox-contract \
     "$image_ref"
+  verify_envd_health "$image_ref"
 }
 
 usage() {
