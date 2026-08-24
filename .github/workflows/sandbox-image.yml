@@ -6,6 +6,7 @@ on:
       - "Dockerfile"
       - "versions.env"
       - "verify-contract.sh"
+      - "envd-bin/**"
       - "config/**"
       - "scripts/sandbox-image.sh"
       - ".github/workflows/sandbox-image.yml"

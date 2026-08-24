@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../versions.env
 source "$ROOT_DIR/versions.env"
 
-ENVIRONMENT_MANAGER_IMAGE_REF="${OMA_ARTIFACT_REGISTRY}/environment-manager@${ENVIRONMENT_MANAGER_IMAGE_DIGEST}"
+ENVIRONMENT_MANAGER_IMAGE_REF="${OMA_ARTIFACT_REGISTRY}/environment-manager-rs@${ENVIRONMENT_MANAGER_IMAGE_DIGEST}"
 RCLONE_FILESTORE_IMAGE_REF="${OMA_ARTIFACT_REGISTRY}/rclone-filestore@${RCLONE_FILESTORE_IMAGE_DIGEST}"
 
 # Every Docker build value that can affect the published runtime is loaded from
@@ -14,7 +14,7 @@ RCLONE_FILESTORE_IMAGE_REF="${OMA_ARTIFACT_REGISTRY}/rclone-filestore@${RCLONE_F
 # this wrapper and the copied in-image contract cannot silently diverge.
 SANDBOX_BUILD_ARG_NAMES=(
   SANDBOX_PLATFORM UBUNTU_DIGEST UBUNTU_SNAPSHOT_TIMESTAMP CA_BUNDLE_URL CA_BUNDLE_SHA256
-  RUNTIME_REVISION CODEX_UNIVERSAL_RECIPE_REVISION
+  RUNTIME_REVISION CODEX_UNIVERSAL_RECIPE_REVISION ENVD_VERSION ENVD_SHA256
   PYTHON_VERSION PYTHON_SHA256 NODE_VERSION NODE_SHA256 GO_VERSION GO_SHA256
   JAVA_VERSION JAVA_RELEASE_TAG JAVA_ARCHIVE JAVA_SHA256 PHP_VERSION PHP_SHA256
   GCC_VERSION GCC_MAJOR GCC_APT_VERSION BUN_VERSION BUN_SHA256
@@ -51,6 +51,8 @@ metadata() {
     "ubuntu_snapshot_timestamp=$UBUNTU_SNAPSHOT_TIMESTAMP" \
     "runtime_revision=$RUNTIME_REVISION" \
     "codex_universal_recipe_revision=$CODEX_UNIVERSAL_RECIPE_REVISION" \
+    "envd_version=$ENVD_VERSION" \
+    "envd_sha256=$ENVD_SHA256" \
     "environment_manager_image_digest=$ENVIRONMENT_MANAGER_IMAGE_DIGEST" \
     "environment_manager_revision=$ENVIRONMENT_MANAGER_REVISION" \
     "environment_manager_version=$ENVIRONMENT_MANAGER_VERSION" \
@@ -201,11 +203,14 @@ verify_version_contract_sources() {
   require_literal "$dockerfile" '"${PNPM_TARBALL_URL}" -o /tmp/pnpm.tgz'
   require_literal "$dockerfile" 'echo "${YARN_SHA256}  /tmp/yarn.tgz" | sha256sum --check --strict'
   require_literal "$dockerfile" 'echo "${PNPM_SHA256}  /tmp/pnpm.tgz" | sha256sum --check --strict'
+  require_literal "$dockerfile" 'config/launcher-settings.json /root/.claude/launcher-settings.json'
   require_literal "$dockerfile" '/opt/python/current/bin'
   require_literal "$dockerfile" '/opt/ruby/current/bin'
   require_literal "$profile" '/opt/python/current/bin'
   require_literal "$profile" '/opt/ruby/current/bin'
   require_literal "$verifier" 'source "$VERSIONS_FILE"'
+  require_literal "$verifier" '"${ENVD_VERSION}"'
+  require_literal "$verifier" '"${ENVD_SHA256}  /usr/bin/envd"'
   require_literal "$verifier" '"${CLAUDE_VERSION} (Claude Code)"'
   require_literal "$verifier" '"environment-runner version ${ENVIRONMENT_MANAGER_VERSION}"'
 
@@ -272,6 +277,10 @@ verify_version_relationships() {
     printf 'source contract failed: ENVIRONMENT_MANAGER_VERSION is not the revision prefix\n' >&2
     return 1
   }
+  [[ "$ENVD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    printf 'source contract failed: ENVD_VERSION is invalid\n' >&2
+    return 1
+  }
 }
 
 verify_source() {
@@ -280,6 +289,7 @@ verify_source() {
   local workflow="$ROOT_DIR/.github/workflows/sandbox-image.yml"
   local bundler_config="$ROOT_DIR/config/bundler-config"
   local gemrc="$ROOT_DIR/config/gemrc"
+  local envd_amd64="$ROOT_DIR/envd-bin/envd-v${ENVD_VERSION}-linux-amd64"
 
   [[ -f "$dockerfile" ]] || {
     printf 'source contract failed: missing %s\n' "$dockerfile" >&2
@@ -299,6 +309,14 @@ verify_source() {
   }
   [[ -f "$gemrc" ]] || {
     printf 'source contract failed: missing %s\n' "$gemrc" >&2
+    return 1
+  }
+  [[ -x "$envd_amd64" ]] || {
+    printf 'source contract failed: missing executable %s\n' "$envd_amd64" >&2
+    return 1
+  }
+  [[ "$(sha256_file "$envd_amd64")" == "$ENVD_SHA256" ]] || {
+    printf 'source contract failed: AMD64 envd SHA-256 does not match versions.env\n' >&2
     return 1
   }
 
@@ -324,6 +342,9 @@ verify_source() {
   require_literal "$dockerfile" 'COMPOSER_HOME=/home/user/.config/composer'
   require_literal "$dockerfile" 'COPY --from=environment_manager_source /usr/local/bin/environment-manager /opt/env-runner/environment-manager'
   require_literal "$dockerfile" 'COPY --from=rclone_filestore_source /opt/rclone/rclone-filestore /opt/rclone/rclone-filestore'
+  require_literal "$dockerfile" 'COPY envd-bin/envd-v${ENVD_VERSION}-linux-amd64 /usr/bin/envd'
+  require_literal "$dockerfile" 'EXPOSE 49983'
+  require_literal "$dockerfile" 'ENTRYPOINT ["/usr/bin/envd", "-isnotfc", "-port", "49983"]'
   require_literal "$dockerfile" '${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore'
   require_literal "$dockerfile" 'ln -s /opt/env-runner/environment-manager /usr/local/bin/environment-manager'
   require_literal "$dockerfile" 'ln -s /opt/claude-code/bin/claude /usr/local/bin/claude'
@@ -382,7 +403,7 @@ verify_source() {
   for checksum_name in \
     PYTHON_SHA256 NODE_SHA256 GO_SHA256 JAVA_SHA256 PHP_SHA256 BUN_SHA256 \
     RUST_SHA256 RUBY_SHA256 CLAUDE_SHA256 UV_SHA256 YARN_SHA256 PNPM_SHA256 \
-    GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256 RCLONE_FILESTORE_SHA256; do
+    GRADLE_SHA256 COMPOSER_SHA256 DOCKER_CLI_SHA256 ENVD_SHA256 RCLONE_FILESTORE_SHA256; do
     verify_sha256_value "$checksum_name"
   done
 
@@ -587,7 +608,9 @@ test_image() {
       "$expected_verifier_sha" "$image_verifier_sha" >&2
     return 1
   }
-  docker run --rm --platform "$SANDBOX_PLATFORM" "$image_ref" /usr/local/bin/verify-sandbox-contract
+  docker run --rm --platform "$SANDBOX_PLATFORM" \
+    --entrypoint /usr/local/bin/verify-sandbox-contract \
+    "$image_ref"
 }
 
 usage() {

@@ -322,6 +322,7 @@ ARG SANDBOX_PLATFORM
 ARG UBUNTU_DIGEST
 ARG RUNTIME_REVISION
 ARG CODEX_UNIVERSAL_RECIPE_REVISION
+ARG ENVD_VERSION
 ARG PYTHON_VERSION
 ARG NODE_VERSION
 ARG GO_VERSION
@@ -405,6 +406,7 @@ COPY --from=tool_assets /opt/gradle/ /opt/gradle/
 COPY --from=claude_asset /opt/claude-code/ /opt/claude-code/
 COPY --from=environment_manager_source /usr/local/bin/environment-manager /opt/env-runner/environment-manager
 COPY --from=rclone_filestore_source /opt/rclone/rclone-filestore /opt/rclone/rclone-filestore
+COPY envd-bin/envd-v${ENVD_VERSION}-linux-amd64 /usr/bin/envd
 
 ### PACKAGE MANAGER, SUDO, AND SHELL CONFIGURATION ###
 
@@ -418,6 +420,7 @@ COPY config/gradle-init.gradle /home/user/.gradle/init.gradle
 COPY config/gemrc /home/user/.gemrc
 COPY config/bundler-config /home/user/.bundle/config
 COPY config/composer-config.json /home/user/.config/composer/config.json
+COPY config/launcher-settings.json /root/.claude/launcher-settings.json
 COPY verify-contract.sh /usr/local/bin/verify-sandbox-contract
 COPY config/profile.sh /etc/profile.d/oma-sandbox.sh
 COPY versions.env /etc/oma-sandbox-versions.env
@@ -426,12 +429,13 @@ COPY versions.env /etc/oma-sandbox-versions.env
 
 ARG ENVIRONMENT_MANAGER_SHA256
 ARG RCLONE_FILESTORE_SHA256
-RUN test -n "$ENVIRONMENT_MANAGER_SHA256" \
+ARG ENVD_SHA256
+RUN echo "${ENVD_SHA256}  /usr/bin/envd" | sha256sum --check --strict \
     && echo "${ENVIRONMENT_MANAGER_SHA256}  /opt/env-runner/environment-manager" | sha256sum --check --strict \
     && echo "${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore" | sha256sum --check --strict \
     && chmod 0440 /etc/sudoers.d/user /etc/sudoers.d/claude \
     && chmod 0644 /etc/profile.d/oma-sandbox.sh \
-    && chmod 0755 /opt/env-runner/environment-manager /opt/rclone/rclone-filestore /usr/local/bin/verify-sandbox-contract \
+    && chmod 0755 /usr/bin/envd /opt/env-runner/environment-manager /opt/rclone/rclone-filestore /usr/local/bin/verify-sandbox-contract \
     && ln -s /opt/env-runner/environment-manager /usr/local/bin/environment-manager \
     && ln -s /opt/claude-code/bin/claude /usr/local/bin/claude \
     && ln -s "${PYTHON_VERSION}" /opt/python/current \
@@ -539,9 +543,12 @@ LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
       ai.superduck.oma.sandbox.platform="${SANDBOX_PLATFORM}" \
       ai.superduck.oma.sandbox.runtime-revision="${RUNTIME_REVISION}" \
       ai.superduck.oma.sandbox.recipe-revision="${CODEX_UNIVERSAL_RECIPE_REVISION}" \
+      ai.superduck.oma.sandbox.envd-version="${ENVD_VERSION}" \
       ai.superduck.oma.sandbox.claude-version="${CLAUDE_VERSION}" \
       ai.superduck.oma.sandbox.environment-manager-image-digest="${ENVIRONMENT_MANAGER_IMAGE_DIGEST}" \
       ai.superduck.oma.sandbox.environment-manager-revision="${ENVIRONMENT_MANAGER_REVISION}" \
       ai.superduck.oma.sandbox.environment-manager-version="${ENVIRONMENT_MANAGER_VERSION}" \
       ai.superduck.oma.sandbox.rclone-filestore-image-digest="${RCLONE_FILESTORE_IMAGE_DIGEST}"
 
+EXPOSE 49983
+ENTRYPOINT ["/usr/bin/envd", "-isnotfc", "-port", "49983"]

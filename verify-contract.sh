@@ -203,6 +203,10 @@ VERSIONS_FILE=/etc/oma-sandbox-versions.env
 # shellcheck source=/dev/null
 source "$VERSIONS_FILE"
 
+[[ -x /usr/bin/envd ]] || fail "envd is missing or not executable"
+assert_output_equals "${ENVD_VERSION}" /usr/bin/envd -version
+assert_output_equals "${ENVD_SHA256}  /usr/bin/envd" sha256sum /usr/bin/envd
+
 [[ "$(uname -m)" == "x86_64" ]] || fail "platform is not linux/amd64"
 [[ "$(id -un)" == "root" ]] || fail "default user is not root"
 [[ "$(id -u)" == "0" ]] || fail "root UID is not 0"

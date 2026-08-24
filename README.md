@@ -2,6 +2,8 @@
 
 本仓库构建并发布 Open Managed Agents 使用的独立 `linux/amd64` Sandbox 镜像。它不是 Open Managed Agents Server 镜像，也不负责 Environment、Session 或 Sandbox 生命周期。其配方精简自 `codex-universal` revision `47f4f0eb5337083e2f610db0d15558932cb4901d` 中固定版本的实践：为每一种受支持的运行时安装一个精选版本，排除 Codex CLI 和多版本管理器，并保持现有 Environment Manager 与 Claude Agent 路径。镜像沿用旧运行合同，以 `root` 作为默认运行账号，`HOME=/root`，Managed Agent 工作目录仍为 `/home/user`；同时预置权限收紧的 `/root/.claude` 和合法空配置 `/root/.claude.json`，保证 Claude Code 首次启动即可安全持久化 root 配置。镜像还保留 UID/GID 1000 的 `user` 和 UID/GID 1001、home 为 `/home/claude` 的 `claude` 兼容账号，两者均使用 Bash 并具有 passwordless sudo。旧 Claude 运行布局中的 `/home/claude/.npm-global`、`/home/claude/.local/bin`、pip cache、Node 全局模块和 Claude 状态目录继续作为共享工具路径；显式切换到 `user` 或 `claude` 时，两个账号也能安全访问这些目录。
 
+镜像提供 `/root/.claude/launcher-settings.json`，供 OMA 启动 Claude Code 时使用。
+
 ## 供应链输入
 
 `versions.env` 是可执行镜像合同中所有平台、运行时、工具版本、下载坐标、校验和和 revision 的唯一值来源。构建 wrapper 从该文件统一生成 BuildKit 参数；Dockerfile 中对应的 `ARG` 不提供重复默认值。相同文件会复制到镜像内的 `/etc/oma-sandbox-versions.env`，供运行时 verifier 读取。固定运行时通过 `/opt/<runtime>/current` 稳定链接暴露，因此 profile、`PATH` 和 verifier 不需要再次硬编码具体版本目录。
@@ -13,6 +15,9 @@
 `OMA_ARTIFACT_REGISTRY` 配置制品所在的 Registry namespace，两个制品分别固定
 Linux AMD64 platform manifest Digest、版本和二进制 SHA-256。
 
+`envd-bin` 按版本和架构保存 `envd` 二进制。当前 `linux/amd64` 镜像只复制并
+验证 AMD64 文件；ARM64 文件保留在仓库中，但暂不用于镜像构建。
+
 当前制品 namespace 为 `registry.gz.cvte.cn/oma`，构建脚本会自动组成两个不可变
 OCI 引用。完成 Registry 登录后，可以直接构建：
 
@@ -21,10 +26,10 @@ SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local \
 just sandbox-image-build
 ```
 
-当前 Environment Manager 来自干净源码 revision
-`4a0b1c8818b3bf70a4b7320b4ebd80e8f62fe855`，版本为 `4a0b1c8`，
-二进制 SHA-256 为
-`6781f8a766b7004998f84dab5f5dae94dcd6bb0756294657c0fc5d5095ccf919`。
+Environment Manager 来自 `environment-manager-rs` revision
+`8606076fb157d4c80d7f5f8e590903b56c0ee365`，版本为 `8606076`，manifest digest 为
+`sha256:033e25702d8ced4ffeb73fe58c300c4fc993ef35c2db3a4b4018b35b7ee4aa4a`，
+二进制 SHA-256 为 `d46982bbd7f0a20ffca86e023490526d6f6a7c65f8eccba06ee9fc171bddce7d`。
 BuildKit 从外部命名镜像上下文复制
 `/usr/local/bin/environment-manager`，Dockerfile 再次校验字节，并通过
 `/usr/local/bin/environment-manager` 符号链接保留命令合同。运行时合同保留
