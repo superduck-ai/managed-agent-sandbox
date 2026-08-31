@@ -50,7 +50,7 @@ Python · Node.js · Go · Java (Temurin) · PHP · Ruby · Bun · Rust（含 ru
 
 ## 多架构支持
 
-构建矩阵声明 `linux/amd64` 与 `linux/arm64`。
+构建矩阵声明 `linux/amd64` 与 `linux/arm64`，两者对等：外部制品、供应链固定和 CI 验证矩阵完全相同。
 
 ### 配置方式
 
@@ -79,11 +79,7 @@ RUST_TARGET_ARM64=aarch64-unknown-linux-gnu
 - **交叉检查架构 token**：每个按架构区分的下载坐标必须包含该架构对应的 token（例如 arm64 的值必须含 `aarch64` 或 `arm64`），防止跨架构复制粘贴
 - **构建参数完整性**：Dockerfile 的每个 `ARG` 必须由 `versions.env` 提供值，不允许内联默认值，不允许孤立键
 
-### 当前 arm64 状态
-
-`environment-manager-rs` 与 `rclone-filestore` 均已固定 `linux/amd64` 和
-`linux/arm64` 的不可变 OCI manifest digest 与二进制 SHA-256。两个架构都进入
-`buildable-architectures`、本地构建矩阵和 CI 原生 runner 验证矩阵。
+新增架构时，若其外部制品（Environment Manager、rclone-filestore）尚未发布，来源合同会将该架构报告为 blocked 但不判定失败，`buildable-architectures` 会自动排除它，直到 `versions.env` 补齐不可变 digest 与 SHA-256。
 
 ## 供应链安全
 
@@ -119,53 +115,34 @@ Environment Manager 与 rclone-filestore 由各自仓库独立发布，不提交
 需要 Docker、Buildx，以及读取 `versions.env` 中外部 OCI 制品的权限。
 
 ```console
-# 查看声明和当前可构建的架构
-just sandbox-image-architectures
-
-# 主机测试 + 全架构来源合同 + Dockerfile 检查
-just sandbox-image-check
-
-# 仅主机侧测试
-just sandbox-image-test-scripts
+just sandbox-image-architectures   # 查看声明和当前可构建的架构
+just sandbox-image-check           # 主机测试 + 全架构来源合同 + Dockerfile 检查
+just sandbox-image-test-scripts    # 仅主机侧测试
 ```
 
-每个架构应在对应的原生 Linux runner 上构建和验证：
+每个架构在对应的原生 Linux runner 上构建并验证，标签按架构区分：
 
 ```console
 IMAGE_TAG=registry.example/sandbox:20260831-abcdef0
 
-# linux/amd64 runner
-SANDBOX_IMAGE_TAG="${IMAGE_TAG}-amd64" \
-  just arch=amd64 sandbox-image-verify
-
-# linux/arm64 runner
-SANDBOX_IMAGE_TAG="${IMAGE_TAG}-arm64" \
-  just arch=arm64 sandbox-image-verify
-```
-
-`just` 实际调用以下脚本：
-
-```console
-./scripts/sandbox-image.sh --arch <arch> build
-./scripts/sandbox-image.sh --arch <arch> test-image <image>
+SANDBOX_IMAGE_TAG="${IMAGE_TAG}-amd64" just arch=amd64 sandbox-image-verify   # amd64 runner
+SANDBOX_IMAGE_TAG="${IMAGE_TAG}-arm64" just arch=arm64 sandbox-image-verify   # arm64 runner
 ```
 
 ## 发布多架构镜像
 
-先推送两个已经通过运行时合同的单架构标签，再使用它们的不可变 digest
-组装统一标签：
+推送两个已通过运行时合同的单架构标签，再用它们的不可变 digest 组装统一标签：
 
 ```console
 docker push "${IMAGE_TAG}-amd64"
 docker push "${IMAGE_TAG}-arm64"
 
-SANDBOX_IMAGE_TAG="$IMAGE_TAG" \
-  just sandbox-image-publish-manifest \
-    amd64=registry.example/sandbox@sha256:... \
-    arm64=registry.example/sandbox@sha256:...
+SANDBOX_IMAGE_TAG="$IMAGE_TAG" just sandbox-image-publish-manifest \
+  amd64=registry.example/sandbox@sha256:... \
+  arm64=registry.example/sandbox@sha256:...
 ```
 
-业务方只使用不带架构后缀的统一标签；Docker 会自动选择匹配的平台镜像。
+业务方只使用不带架构后缀的统一标签；Docker 自动选择匹配的平台镜像。
 
 ## CI 流程
 
