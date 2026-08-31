@@ -43,7 +43,7 @@ sandbox_build_image() (
   sandbox_verify_arch_source "$SANDBOX_ARCH" --require-buildable || return 1
   sandbox_build_args || return 1
 
-  local -a build_options=(--provenance=mode=min)
+  local -a build_options=(--provenance=false)
   if [[ -n "$metadata_file" ]]; then
     mkdir -p "$(dirname "$metadata_file")"
     build_options+=(--metadata-file "$metadata_file")
