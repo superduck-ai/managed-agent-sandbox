@@ -363,7 +363,6 @@ sandbox_verify_runtime_contract_literals() {
   local workflow="$SANDBOX_ROOT_DIR/.github/workflows/sandbox-image.yml"
   local bundler_config="$SANDBOX_ROOT_DIR/image/config/bundler-config"
   local gemrc="$SANDBOX_ROOT_DIR/image/config/gemrc"
-  local build_job_condition
 
   # Dockerfile 中的镜像结构和账号布局。
   sandbox_require_literal "$dockerfile" 'ARG SANDBOX_PLATFORM'
@@ -432,23 +431,20 @@ sandbox_verify_runtime_contract_literals() {
   sandbox_reject_literal "$bundler_config" 'FALLBACK_TIMEOUT'
   sandbox_require_literal "$gemrc" 'https://mirrors.cloud.tencent.com/rubygems/'
 
-  # CI workflow 安全和流程检查。
-  sandbox_require_literal_count "$workflow" 'persist-credentials: false' 3
+  # CI workflow 只执行静态合同检查，不访问 Registry，也不构建或发布镜像。
+  sandbox_require_literal_count "$workflow" 'persist-credentials: false' 1
   sandbox_require_literal "$workflow" '- ".dockerignore"'
-  sandbox_require_literal "$workflow" 'immutable_ref="${IMAGE_REF%:*}@$platform_digest"'
-  sandbox_require_literal "$workflow" 'uses: actions/upload-artifact@'
-  sandbox_require_literal "$workflow" 'uses: actions/download-artifact@'
-  sandbox_require_literal "$workflow" './scripts/sandbox-image.sh publish-manifest "$INDEX_REF" "${refs[@]}"'
-  sandbox_reject_literal "$workflow" 'publish-manifest "$INDEX_REF" $refs'
-
-  # build-test-publish 必须对 PR 无条件运行。
-  build_job_condition="$(awk '
-    /^  build-test-publish:/ { in_job = 1; next }
-    /^  publish-manifest:/ { in_job = 0 }
-    in_job && /^    if:/ { print }
-  ' "$workflow")"
-  [[ -z "$build_job_condition" ]] \
-    || sandbox_contract_fail 'build-test-publish must run on pull requests, not only workflow_dispatch'
+  sandbox_require_literal "$workflow" './tests/run-tests.sh'
+  sandbox_require_literal "$workflow" './scripts/sandbox-image.sh verify-source --all'
+  sandbox_require_literal "$workflow" './scripts/sandbox-image.sh --arch "$arch" check'
+  sandbox_reject_literal "$workflow" './scripts/sandbox-image.sh build'
+  sandbox_reject_literal "$workflow" './scripts/sandbox-image.sh test-image'
+  sandbox_reject_literal "$workflow" 'docker/login-action@'
+  sandbox_reject_literal "$workflow" 'docker push'
+  sandbox_reject_literal "$workflow" 'publish-manifest'
+  sandbox_reject_literal "$workflow" 'packages: write'
+  sandbox_reject_literal "$workflow" 'actions/upload-artifact@'
+  sandbox_reject_literal "$workflow" 'actions/download-artifact@'
 
   # 禁止使用可变的在线安装方式。
   sandbox_reject_literal "$dockerfile" 'python -m pip install --no-cache-dir --upgrade pip'

@@ -45,7 +45,7 @@ Python · Node.js · Go · Java (Temurin) · PHP · Ruby · Bun · Rust（含 ru
 | ├─ `build.sh` | 单架构构建与 OCI Manifest 发布 |
 | └─ `image-test.sh` | 构建后镜像验证（平台、大小、运行时合同） |
 | `tests/run-tests.sh` | 主机侧测试，不需要 Docker 与网络 |
-| `.github/workflows/sandbox-image.yml` | CI：来源合同 → 按架构构建验证 → Manifest 发布 |
+| `.github/workflows/sandbox-image.yml` | CI：主机测试、全架构来源合同与 Dockerfile 静态检查 |
 | `justfile` | 本地开发快捷命令 |
 
 ## 多架构支持
@@ -106,9 +106,9 @@ RUST_TARGET_ARM64=aarch64-unknown-linux-gnu
 
 Environment Manager 与 rclone-filestore 由各自仓库独立发布，不提交到本仓库：
 
-- `OMA_ARTIFACT_REGISTRY` 配置制品所在的 Registry namespace（当前为 `registry.gz.cvte.cn/oma`）
+- `OMA_ARTIFACT_REGISTRY` 配置制品所在的 Registry namespace（当前为 `ghcr.io/superduck-ai`）
 - BuildKit 通过外部命名镜像上下文复制二进制，Dockerfile 再次校验字节
-- CI 和本地构建读取相同的镜像输入配置；Registry 凭据只在发布时需要
+- 完整构建需要 GHCR 读取权限；CI 静态检查使用本地占位 context，不访问制品 Registry
 
 ## 构建与验证
 
@@ -120,10 +120,10 @@ just sandbox-image-check           # 主机测试 + 全架构来源合同 + Dock
 just sandbox-image-test-scripts    # 仅主机侧测试
 ```
 
-每个架构在对应的原生 Linux runner 上构建并验证，标签按架构区分：
+完整构建与验证由发布者在可运行目标架构的环境中执行，标签按架构区分：
 
 ```console
-IMAGE_TAG=registry.example/sandbox:20260831-abcdef0
+IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:<full-commit-sha>
 
 SANDBOX_IMAGE_TAG="${IMAGE_TAG}-amd64" just arch=amd64 sandbox-image-verify   # amd64 runner
 SANDBOX_IMAGE_TAG="${IMAGE_TAG}-arm64" just arch=arm64 sandbox-image-verify   # arm64 runner
@@ -146,11 +146,12 @@ SANDBOX_IMAGE_TAG="$IMAGE_TAG" just sandbox-image-publish-manifest \
 
 ## CI 流程
 
-`.github/workflows/sandbox-image.yml` 在 PR 中执行构建验证，也可以手动运行：
+`.github/workflows/sandbox-image.yml` 在 PR 或手动触发时只执行静态检查：
 
-1. 运行主机测试、来源合同和 Dockerfile 检查。
-2. 在原生 amd64、arm64 runner 上分别构建并执行运行时合同。
-3. 手动运行且设置 `publish=true` 时，将验证过的镜像推送到 GHCR，并发布统一 Manifest。
+1. 运行主机侧测试。
+2. 验证 amd64、arm64 的来源与版本合同。
+3. 对每个架构执行 Dockerfile `buildx --check`。
 
-CI 使用完整 Git commit SHA 作为标签，不发布 CVTE Registry，也不会自动更新
-E2B Template。第三方 Actions 均固定到 commit SHA，Checkout 不持久化凭据。
+CI 不拉取外部 OCI 制品，不构建或推送镜像，也不更新 E2B Template。
+完整镜像构建、运行时合同验证和 Manifest 发布均由发布者在本地执行。第三方
+Actions 均固定到 commit SHA，Checkout 不持久化凭据。
