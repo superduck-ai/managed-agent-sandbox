@@ -1,5 +1,5 @@
-.git
-.github
-README.md
-justfile
-scripts
+# 构建上下文只携带镜像合同和镜像内载荷，其余全部排除。
+*
+!Dockerfile
+!versions.env
+!image

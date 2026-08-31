@@ -144,9 +144,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 FROM base AS node_asset
 ARG NODE_VERSION
+ARG NODE_ARCH
 ARG NODE_SHA256
 RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
-      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
       -o /tmp/node.tar.xz \
     && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum --check --strict \
     && mkdir -p "/opt/node/${NODE_VERSION}" \
@@ -157,8 +158,10 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
 
 FROM base AS go_asset
 ARG GO_VERSION
+ARG GO_ARCH
 ARG GO_SHA256
-RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
+RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+      "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tar.gz \
     && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum --check --strict \
     && mkdir -p "/opt/go/${GO_VERSION}" \
     && tar -xzf /tmp/go.tar.gz -C "/opt/go/${GO_VERSION}" --strip-components=1 \
@@ -183,13 +186,14 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
 
 FROM base AS bun_asset
 ARG BUN_VERSION
+ARG BUN_ASSET
 ARG BUN_SHA256
 RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
-      "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64-baseline.zip" \
+      "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${BUN_ASSET}.zip" \
       -o /tmp/bun.zip \
     && echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum --check --strict \
     && unzip -q /tmp/bun.zip -d /tmp/bun \
-    && install -Dm0755 /tmp/bun/bun-linux-x64-baseline/bun /opt/bun/bin/bun \
+    && install -Dm0755 "/tmp/bun/${BUN_ASSET}/bun" /opt/bun/bin/bun \
     && ln -s bun /opt/bun/bin/bunx
 
 ### NODE PACKAGE MANAGERS ###
@@ -243,6 +247,7 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
 
 FROM base AS tool_assets
 ARG UV_VERSION
+ARG UV_TARGET
 ARG UV_SHA256
 ARG MAVEN_VERSION
 ARG MAVEN_SHA512
@@ -251,14 +256,15 @@ ARG GRADLE_SHA256
 ARG COMPOSER_VERSION
 ARG COMPOSER_SHA256
 ARG DOCKER_CLI_VERSION
+ARG DOCKER_CLI_ARCH
 ARG DOCKER_CLI_SHA256
 RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
-      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${UV_TARGET}.tar.gz" \
       -o /tmp/uv.tar.gz \
     && echo "${UV_SHA256}  /tmp/uv.tar.gz" | sha256sum --check --strict \
     && tar -xzf /tmp/uv.tar.gz -C /tmp \
-    && install -Dm0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /opt/tools/bin/uv \
-    && install -Dm0755 /tmp/uv-x86_64-unknown-linux-gnu/uvx /opt/tools/bin/uvx \
+    && install -Dm0755 "/tmp/uv-${UV_TARGET}/uv" /opt/tools/bin/uv \
+    && install -Dm0755 "/tmp/uv-${UV_TARGET}/uvx" /opt/tools/bin/uvx \
     && curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
       "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
       -o /tmp/maven.tar.gz \
@@ -279,7 +285,7 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
     && echo "${COMPOSER_SHA256}  /tmp/composer.phar" | sha256sum --check --strict \
     && install -Dm0755 /tmp/composer.phar /opt/tools/bin/composer \
     && curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
-      "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
+      "https://download.docker.com/linux/static/stable/${DOCKER_CLI_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
       -o /tmp/docker.tgz \
     && echo "${DOCKER_CLI_SHA256}  /tmp/docker.tgz" | sha256sum --check --strict \
     && tar -xzf /tmp/docker.tgz -C /tmp \
@@ -289,27 +295,45 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
 
 FROM base AS claude_asset
 ARG CLAUDE_VERSION
+ARG CLAUDE_NPM_PACKAGE
 ARG CLAUDE_SHA256
 RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
-      "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-${CLAUDE_VERSION}.tgz" \
+      "https://registry.npmjs.org/@anthropic-ai/${CLAUDE_NPM_PACKAGE}/-/${CLAUDE_NPM_PACKAGE}-${CLAUDE_VERSION}.tgz" \
       -o /tmp/claude.tgz \
     && echo "${CLAUDE_SHA256}  /tmp/claude.tgz" | sha256sum --check --strict \
     && mkdir -p /tmp/claude \
     && tar -xzf /tmp/claude.tgz -C /tmp/claude \
     && install -Dm0755 /tmp/claude/package/claude /opt/claude-code/bin/claude
 
+# Claude Code restricts --sdk-url to Anthropic-owned hosts. OMA uses its own
+# code-session endpoint, so patch the fixed upstream artifact in a disposable
+# build stage. Python and the backup never enter the runtime image.
+FROM base AS claude_patched_asset
+ARG CLAUDE_PATCHED_SHA256
+COPY --from=claude_asset /opt/claude-code/bin/claude /opt/claude-code/bin/claude
+COPY image/patch-claude-sdk-url.py /tmp/patch-claude-sdk-url.py
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends python3 \
+    && python3 /tmp/patch-claude-sdk-url.py \
+      /opt/claude-code/bin/claude \
+      --backup /tmp/claude.sdk-url.bak \
+    && echo "${CLAUDE_PATCHED_SHA256}  /opt/claude-code/bin/claude" | sha256sum --check --strict \
+    && rm -f /tmp/claude.sdk-url.bak /tmp/patch-claude-sdk-url.py
+
 ### ENVIRONMENT MANAGER ###
 
 # The independent environment-manager release is consumed from its immutable
-# OCI image. versions.env pins the platform manifest; the final stage additionally
-# verifies the copied binary bytes.
+# OCI image. versions.env pins one platform manifest per architecture; the final
+# stage additionally verifies the copied binary bytes.
 FROM --platform=${SANDBOX_PLATFORM} environment_manager AS environment_manager_source
 
 ### RCLONE FILESTORE ###
 
 # rclone-filestore is independently built and consumed from an immutable OCI
 # image context. The registry location is supplied by the builder; versions.env
-# pins the accepted linux/amd64 manifest and payload bytes.
+# pins the accepted per-architecture manifest and payload bytes.
 FROM --platform=${SANDBOX_PLATFORM} rclone_filestore AS rclone_filestore_source
 
 ### FINAL RUNTIME IMAGE ###
@@ -320,9 +344,11 @@ FROM base AS runtime
 
 ARG SANDBOX_PLATFORM
 ARG UBUNTU_DIGEST
+ARG APT_RUNTIME_MIRROR
 ARG RUNTIME_REVISION
 ARG CODEX_UNIVERSAL_RECIPE_REVISION
 ARG ENVD_VERSION
+ARG ENVD_ARCH
 ARG PYTHON_VERSION
 ARG NODE_VERSION
 ARG GO_VERSION
@@ -383,7 +409,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && ln -sf "/usr/bin/g++-${GCC_MAJOR}" /usr/local/bin/c++ \
     && printf '%s\n' \
       'Types: deb' \
-      'URIs: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/' \
+      "URIs: ${APT_RUNTIME_MIRROR}" \
       'Suites: noble noble-updates noble-backports noble-security' \
       'Components: main universe restricted multiverse' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
@@ -403,26 +429,26 @@ COPY --from=rust_asset /opt/rust/ /opt/rust/
 COPY --from=tool_assets /opt/tools/bin/ /usr/local/bin/
 COPY --from=tool_assets /opt/maven/ /opt/maven/
 COPY --from=tool_assets /opt/gradle/ /opt/gradle/
-COPY --from=claude_asset /opt/claude-code/ /opt/claude-code/
+COPY --from=claude_patched_asset /opt/claude-code/ /opt/claude-code/
 COPY --from=environment_manager_source /usr/local/bin/environment-manager /opt/env-runner/environment-manager
 COPY --from=rclone_filestore_source /opt/rclone/rclone-filestore /opt/rclone/rclone-filestore
-COPY envd-bin/envd-v${ENVD_VERSION}-linux-amd64 /usr/bin/envd
+COPY image/envd-bin/envd-v${ENVD_VERSION}-linux-${ENVD_ARCH} /usr/bin/envd
 
 ### PACKAGE MANAGER, SUDO, AND SHELL CONFIGURATION ###
 
-COPY config/pip.conf /etc/pip.conf
-COPY config/npmrc /etc/npmrc
-COPY config/sudoers-user /etc/sudoers.d/user
-COPY config/sudoers-claude /etc/sudoers.d/claude
-COPY config/cargo-config.toml /home/user/.cargo/config.toml
-COPY config/maven-settings.xml /home/user/.m2/settings.xml
-COPY config/gradle-init.gradle /home/user/.gradle/init.gradle
-COPY config/gemrc /home/user/.gemrc
-COPY config/bundler-config /home/user/.bundle/config
-COPY config/composer-config.json /home/user/.config/composer/config.json
-COPY config/launcher-settings.json /root/.claude/launcher-settings.json
-COPY verify-contract.sh /usr/local/bin/verify-sandbox-contract
-COPY config/profile.sh /etc/profile.d/oma-sandbox.sh
+COPY image/config/pip.conf /etc/pip.conf
+COPY image/config/npmrc /etc/npmrc
+COPY image/config/sudoers-user /etc/sudoers.d/user
+COPY image/config/sudoers-claude /etc/sudoers.d/claude
+COPY image/config/cargo-config.toml /home/user/.cargo/config.toml
+COPY image/config/maven-settings.xml /home/user/.m2/settings.xml
+COPY image/config/gradle-init.gradle /home/user/.gradle/init.gradle
+COPY image/config/gemrc /home/user/.gemrc
+COPY image/config/bundler-config /home/user/.bundle/config
+COPY image/config/composer-config.json /home/user/.config/composer/config.json
+COPY image/config/launcher-settings.json /root/.claude/launcher-settings.json
+COPY image/verify-contract.sh /usr/local/bin/verify-sandbox-contract
+COPY image/config/profile.sh /etc/profile.d/oma-sandbox.sh
 COPY versions.env /etc/oma-sandbox-versions.env
 
 ### RUNTIME LINKS, USERS, AND SHARED DIRECTORIES ###
@@ -430,9 +456,11 @@ COPY versions.env /etc/oma-sandbox-versions.env
 ARG ENVIRONMENT_MANAGER_SHA256
 ARG RCLONE_FILESTORE_SHA256
 ARG ENVD_SHA256
+ARG CLAUDE_PATCHED_SHA256
 RUN echo "${ENVD_SHA256}  /usr/bin/envd" | sha256sum --check --strict \
     && echo "${ENVIRONMENT_MANAGER_SHA256}  /opt/env-runner/environment-manager" | sha256sum --check --strict \
     && echo "${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore" | sha256sum --check --strict \
+    && echo "${CLAUDE_PATCHED_SHA256}  /opt/claude-code/bin/claude" | sha256sum --check --strict \
     && chmod 0440 /etc/sudoers.d/user /etc/sudoers.d/claude \
     && chmod 0644 /etc/profile.d/oma-sandbox.sh \
     && chmod 0755 /usr/bin/envd /opt/env-runner/environment-manager /opt/rclone/rclone-filestore /usr/local/bin/verify-sandbox-contract \
@@ -538,7 +566,7 @@ USER root
 ENV HOME=/root
 
 LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
-      org.opencontainers.image.description="Fixed-runtime linux/amd64 base for E2B managed-agent sandboxes" \
+      org.opencontainers.image.description="Fixed-runtime ${SANDBOX_PLATFORM} base for E2B managed-agent sandboxes" \
       org.opencontainers.image.base.digest="${UBUNTU_DIGEST}" \
       ai.superduck.oma.sandbox.platform="${SANDBOX_PLATFORM}" \
       ai.superduck.oma.sandbox.runtime-revision="${RUNTIME_REVISION}" \
