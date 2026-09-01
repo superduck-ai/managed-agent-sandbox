@@ -6,7 +6,7 @@
 
 ## 镜像概述
 
-镜像配方精简自 [`codex-universal`](https://github.com/anthropics/codex-universal) 的固定版本实践：为每种受支持的运行时安装一个精选版本，排除 Codex CLI 与多版本管理器，并保持现有 Environment Manager 与 Claude Agent 路径。
+镜像配方精简自 [`codex-universal`](https://github.com/openai/codex-universal) 的固定版本实践：为每种受支持的运行时安装一个精选版本，排除 Codex CLI 与多版本管理器，并保持现有 Environment Manager 与 Claude Agent 路径。
 
 ### 用户模型
 
