@@ -1,3 +1,5 @@
 {
-  "skipWebFetchPreflight": true
+  "skipWebFetchPreflight": true,
+  "autoMemoryDirectory": "/mnt/memory",
+  "autoMemoryEnabled": true
 }
