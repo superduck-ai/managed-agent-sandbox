@@ -4,18 +4,14 @@ on:
   pull_request:
     paths:
       - "Dockerfile"
+      - ".dockerignore"
+      - "justfile"
       - "versions.env"
-      - "verify-contract.sh"
-      - "config/**"
-      - "scripts/sandbox-image.sh"
+      - "image/**"
+      - "scripts/**"
+      - "tests/**"
       - ".github/workflows/sandbox-image.yml"
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Publish the verified image to GHCR"
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -28,7 +24,7 @@ jobs:
   source-contract:
     name: Source and Dockerfile contract
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -38,74 +34,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - name: Verify pinned source and version consistency
-        run: ./scripts/sandbox-image.sh verify-source
+      - name: Run the host-side test suite
+        run: ./tests/run-tests.sh
 
-      - name: Check Dockerfile
-        run: ./scripts/sandbox-image.sh check
+      - name: Verify pinned source and version consistency for every architecture
+        run: ./scripts/sandbox-image.sh verify-source --all
 
-  build-test-publish:
-    name: Build, verify, and optional publish
-    if: github.event_name == 'workflow_dispatch'
-    needs: source-contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE_REF: ghcr.io/${{ github.repository }}:${{ github.sha }}
-    outputs:
-      image-digest: ${{ steps.identity.outputs.digest }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-
-      - name: Build linux/amd64 image into the local daemon
-        env:
-          SANDBOX_IMAGE_TAG: ${{ env.IMAGE_REF }}
-          SANDBOX_BUILDX_CACHE_FROM: type=gha,scope=sandbox-base
-          SANDBOX_BUILDX_CACHE_TO: type=gha,scope=sandbox-base,mode=max
-        run: ./scripts/sandbox-image.sh build
-
-      - name: Enforce platform, size, and runtime contracts
-        run: ./scripts/sandbox-image.sh test-image "$IMAGE_REF"
-
-      - name: Log in to GHCR
-        if: inputs.publish
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push the exact verified image and record its identity
-        id: identity
-        if: inputs.publish
+      - name: Check the Dockerfile for every architecture
         shell: bash
         run: |
           set -euo pipefail
-          local_image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
-          local_descriptor_digest="$(docker image inspect "$IMAGE_REF" | jq -r '.[0].Descriptor.digest // empty')"
-          [[ "$local_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "tested local image ID is invalid" >&2; exit 1; }
-          docker push "$IMAGE_REF"
-          docker buildx imagetools inspect --raw "$IMAGE_REF" > /tmp/sandbox-image-manifest.json
-          published_config_digest="$(jq -r '.config.digest // empty' /tmp/sandbox-image-manifest.json)"
-          digest="$(docker buildx imagetools inspect "$IMAGE_REF" | awk '$1 == "Digest:" { print $2; exit }')"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "published digest is missing or invalid" >&2; exit 1; }
-          # An OCI index is identified by its registry descriptor digest. A classic
-          # single-manifest image is identified by its config digest (the local image ID).
-          if [[ "$digest" != "$local_descriptor_digest" && "$published_config_digest" != "$local_image_id" ]]; then
-            echo "published artifact does not match tested descriptor $local_descriptor_digest or config $local_image_id" >&2
-            exit 1
-          fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Published verified identity: $IMAGE_REF@$digest (local identity $local_image_id)" >> "$GITHUB_STEP_SUMMARY"
-
-      # Deliberately no E2B Template promotion step. Deployment is a separate,
-      # explicitly authorized operation that consumes the recorded digest.
+          for arch in $(./scripts/sandbox-image.sh architectures); do
+            echo "::group::buildx check linux/$arch"
+            ./scripts/sandbox-image.sh --arch "$arch" check
+            echo "::endgroup::"
+          done
