@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 镜像内运行时合同验证器。
+# 在构建后的容器内执行，验证所有运行时、工具链、账号布局和包管理器配置。
 
 set -euo pipefail
 
@@ -6,6 +8,8 @@ fail() {
   printf 'sandbox contract failed: %s\n' "$*" >&2
   exit 1
 }
+
+# ── 断言工具函数 ──────────────────────────────────────────────
 
 assert_output_contains() {
   local expected="$1"
@@ -57,6 +61,8 @@ assert_writable_dir() {
   rm -f "$probe" || fail "cannot clean write probe: $probe"
 }
 
+# ── Cargo 编译验证 ────────────────────────────────────────────
+
 assert_cargo_builds() {
   local output probe_dir
   probe_dir="$(mktemp -d)"
@@ -77,6 +83,9 @@ assert_cargo_builds() {
   [[ "$output" == 'cargo-linker-ok' ]] || fail "Cargo probe returned unexpected output: $output"
 }
 
+# ── 包管理器镜像源验证 ──────────────────────────────────────
+
+# 验证 Yarn 只请求 npmmirror，不请求官方源。
 assert_yarn_uses_npmmirror() {
   local output probe_dir
   probe_dir="$(mktemp -d)"
@@ -93,6 +102,7 @@ assert_yarn_uses_npmmirror() {
   ! grep -Fq 'https://registry.npmjs.org/' <<<"$output" || fail "Yarn requested registry.npmjs.org"
 }
 
+# 验证 Bun 只请求 npmmirror，不请求官方源。
 assert_bun_uses_npmmirror() {
   local output probe_dir
   probe_dir="$(mktemp -d)"
@@ -108,6 +118,7 @@ assert_bun_uses_npmmirror() {
   ! grep -Fq 'https://registry.npmjs.org/' <<<"$output" || fail "Bun requested registry.npmjs.org"
 }
 
+# 验证 Bundler 只请求腾讯云镜像，不请求 rubygems.org。
 assert_bundler_uses_mirror() {
   local output probe_dir
   probe_dir="$(mktemp -d)"
@@ -124,6 +135,10 @@ assert_bundler_uses_mirror() {
   ! grep -Fq 'HTTP GET https://rubygems.org/' <<<"$output" || fail "Bundler requested rubygems.org"
 }
 
+# ── Environment Manager 集成验证 ──────────────────────────────
+
+# 通过一个 v1 Manifest 真实安装 apt、cargo、gem、go、npm、pip 包，
+# 验证每个安装结果在约定路径可见。
 assert_environment_manager_provisions_packages() {
   local probe_dir stdout_file stderr_file
   probe_dir="$(mktemp -d)"
@@ -158,6 +173,7 @@ JSON
   rm -rf "$probe_dir"
 }
 
+# 验证 Environment Manager 在首个包管理器失败后立即停止，不执行后续管理器。
 assert_environment_manager_stops_after_first_failure() {
   local process_exit_code probe_dir stderr_file stdout_file
   local npm_marker=/home/claude/.npm-global/lib/node_modules/is-odd
@@ -198,12 +214,51 @@ JSON
   rm -rf "$probe_dir"
 }
 
+# ── 架构解析 ──────────────────────────────────────────────────
+#
+# 从构建 wrapper 使用的同一张构建矩阵中识别当前镜像的架构：
+# 用 uname -m 与每个架构的 UNAME_MACHINE 匹配。
+# 然后将所有 SANDBOX_ARCH_VARS 条目从 <NAME>_<ARCH> 解析为 <NAME>，
+# 使后续合同只读取普通名字，不可能用一种架构的值验证另一种架构的镜像。
+
 VERSIONS_FILE=/etc/oma-sandbox-versions.env
 [[ -r "$VERSIONS_FILE" ]] || fail "missing image version contract: $VERSIONS_FILE"
 # shellcheck source=/dev/null
 source "$VERSIONS_FILE"
 
-[[ "$(uname -m)" == "x86_64" ]] || fail "platform is not linux/amd64"
+SANDBOX_ARCH=""
+for platform in $SANDBOX_PLATFORMS; do
+  candidate_arch="${platform#linux/}"
+  candidate_suffix="$(printf '%s' "$candidate_arch" | tr '[:lower:]' '[:upper:]')"
+  candidate_machine_name="UNAME_MACHINE_${candidate_suffix}"
+  if [[ "${!candidate_machine_name:-}" == "$(uname -m)" ]]; then
+    SANDBOX_ARCH="$candidate_arch"
+    SANDBOX_ARCH_SUFFIX="$candidate_suffix"
+    break
+  fi
+done
+[[ -n "$SANDBOX_ARCH" ]] || \
+  fail "running machine $(uname -m) is not an architecture in SANDBOX_PLATFORMS: $SANDBOX_PLATFORMS"
+
+for name in $SANDBOX_ARCH_VARS; do
+  source_name="${name}_${SANDBOX_ARCH_SUFFIX}"
+  [[ -n "${!source_name+set}" ]] || fail "image version contract does not define $source_name"
+  printf -v "$name" '%s' "${!source_name}"
+done
+unset platform candidate_arch candidate_suffix candidate_machine_name name source_name
+
+SANDBOX_PLATFORM="linux/${SANDBOX_ARCH}"
+[[ "$(uname -m)" == "$UNAME_MACHINE" ]] || \
+  fail "machine $(uname -m) does not match $SANDBOX_PLATFORM (expected $UNAME_MACHINE)"
+
+# ── envd ──────────────────────────────────────────────────────
+
+[[ -x /usr/bin/envd ]] || fail "envd is missing or not executable"
+assert_output_equals "${ENVD_VERSION}" /usr/bin/envd -version
+assert_output_equals "${ENVD_SHA256}  /usr/bin/envd" sha256sum /usr/bin/envd
+
+# ── 用户模型 ──────────────────────────────────────────────────
+
 [[ "$(id -un)" == "root" ]] || fail "default user is not root"
 [[ "$(id -u)" == "0" ]] || fail "root UID is not 0"
 [[ "$(id -gn)" == "root" ]] || fail "root primary group is not root"
@@ -217,6 +272,8 @@ source "$VERSIONS_FILE"
 assert_output_equals '{}' cat /root/.claude.json
 assert_writable_dir /root/.claude
 sudo -n true || fail "passwordless sudo is unavailable"
+
+# user 账号（UID 1000）
 user_passwd_record="$(getent passwd user)"
 IFS=: read -r user_name _user_password user_uid user_gid _user_gecos user_home user_shell <<<"$user_passwd_record"
 [[ "$user_name" == "user" ]] || fail "user account name is not user"
@@ -224,12 +281,16 @@ IFS=: read -r user_name _user_password user_uid user_gid _user_gecos user_home u
 [[ "$user_gid" == "1000" ]] || fail "user account GID is not 1000"
 [[ "$user_home" == "/home/user" ]] || fail "user account home is not /home/user"
 [[ "$user_shell" == "/bin/bash" ]] || fail "user account shell is not /bin/bash"
+
+# claude 兼容账号（UID 1001）
 assert_output_equals 'claude:x:1001:1001::/home/claude:/bin/bash' getent passwd claude
 assert_output_equals 'claude:x:1001:user' getent group claude
 assert_output_equals 'user:x:1000:claude' getent group user
 [[ "$(stat -c '%U:%G' /home/claude)" == "claude:claude" ]] || fail "/home/claude ownership is invalid"
 [[ "$(stat -c '%a' /home/claude)" == "2770" ]] || fail "/home/claude mode is invalid"
 [[ "$(stat -c '%a' /home/user)" == "2770" ]] || fail "/home/user mode is invalid"
+
+# ── 环境变量 ──────────────────────────────────────────────────
 
 [[ "$PIP_ROOT_USER_ACTION" == "ignore" ]] || fail "PIP_ROOT_USER_ACTION is not ignore"
 [[ "$PIP_CACHE_DIR" == "/home/claude/.cache/pip" ]] || fail "PIP_CACHE_DIR is not Claude-compatible"
@@ -246,6 +307,8 @@ assert_output_equals 'user:x:1000:claude' getent group user
 [[ ":$PATH:" == *":/home/claude/.npm-global/bin:"* ]] || fail "Claude npm-global bin is not on PATH"
 [[ ":$PATH:" == *":/home/claude/.local/bin:"* ]] || fail "Claude local bin is not on PATH"
 
+# ── 共享目录可写性 ────────────────────────────────────────────
+
 for shared_dir in \
   /home/claude/.cache/pip \
   /home/claude/.claude \
@@ -256,6 +319,8 @@ for shared_dir in \
   /home/claude/project; do
   assert_writable_dir "$shared_dir"
 done
+
+# ── user 和 claude 账号功能验证 ──────────────────────────────
 
 sudo -n -H -u user bash -lc '
   set -e
@@ -292,6 +357,8 @@ sudo -n -H -u claude bash -lc '
   sudo -n true
 ' || fail "claude account contract failed"
 
+# ── 运行时版本 ────────────────────────────────────────────────
+
 assert_output_contains "Python ${PYTHON_VERSION}" python --version
 assert_output_contains 'pip ' python -m pip --version
 python -c 'import bz2, ctypes, lzma, sqlite3, ssl; assert ssl.OPENSSL_VERSION; assert sqlite3.connect(":memory:").execute("select 1").fetchone() == (1,)'
@@ -321,12 +388,18 @@ assert_output_contains 'rustfmt ' rustfmt --version
 assert_output_contains 'rustfmt ' cargo fmt --version
 assert_output_contains 'clippy ' cargo clippy --version
 assert_output_contains 'rust-analyzer ' rust-analyzer --version
+
+# Rust LLVM tools
 rust_sysroot="$(rustc --print sysroot)"
 for llvm_tool in llvm-cov llvm-profdata; do
   [[ -x "$rust_sysroot/lib/rustlib/${RUST_TARGET}/bin/$llvm_tool" ]] || fail "missing Rust LLVM tool: $llvm_tool"
   "$rust_sysroot/lib/rustlib/${RUST_TARGET}/bin/$llvm_tool" --version >/dev/null || fail "Rust LLVM tool failed to load: $llvm_tool"
 done
+
+# Cargo 实际编译链接测试
 assert_cargo_builds
+
+# Ruby
 assert_output_contains "ruby ${RUBY_VERSION}" ruby --version
 ruby -ropenssl -rpsych -rzlib -rfiddle -e 'abort "Ruby native extensions failed" unless Zlib.inflate(Zlib.deflate("sandbox")) == "sandbox"'
 assert_command gem
@@ -336,18 +409,23 @@ assert_output_contains 'https://mirrors.cloud.tencent.com/rubygems/' bundle conf
 if grep -Fq 'FALLBACK_TIMEOUT' "$BUNDLE_USER_CONFIG"; then
   fail "Bundler mirror fallback must not be configured"
 fi
+
+# Claude Code
 [[ -L /usr/local/bin/claude ]] || fail "claude command is not a compatibility symlink"
 assert_output_equals '/opt/claude-code/bin/claude' readlink /usr/local/bin/claude
+assert_output_equals "${CLAUDE_PATCHED_SHA256}  /opt/claude-code/bin/claude" sha256sum /opt/claude-code/bin/claude
 assert_output_equals "${CLAUDE_VERSION} (Claude Code)" claude --version
 assert_output_equals "${CLAUDE_VERSION} (Claude Code)" /opt/claude-code/bin/claude --version
 assert_output_equals "${CLAUDE_VERSION} (Claude Code)" sudo -n -H -u user claude --version
 assert_output_equals "${CLAUDE_VERSION} (Claude Code)" sudo -n -H -u claude /opt/claude-code/bin/claude --version
 
+# ── Environment Manager 和 rclone-filestore ──────────────────
+
 [[ -x /opt/env-runner/environment-manager ]] || fail "environment-manager payload is not executable"
 [[ -L /usr/local/bin/environment-manager ]] || fail "environment-manager command is not a compatibility symlink"
 assert_output_equals '/opt/env-runner/environment-manager' readlink /usr/local/bin/environment-manager
-assert_output_contains "environment-runner version ${ENVIRONMENT_MANAGER_VERSION}" /usr/local/bin/environment-manager --version
-assert_output_contains "environment-runner version ${ENVIRONMENT_MANAGER_VERSION}" sudo -n -H -u claude /usr/local/bin/environment-manager --version
+assert_output_contains "environment-runner ${ENVIRONMENT_MANAGER_VERSION}" /usr/local/bin/environment-manager --version
+assert_output_contains "environment-runner ${ENVIRONMENT_MANAGER_VERSION}" sudo -n -H -u claude /usr/local/bin/environment-manager --version
 [[ -x /opt/rclone/rclone-filestore ]] || fail "rclone-filestore payload is not executable"
 assert_output_equals \
   "${RCLONE_FILESTORE_SHA256}  /opt/rclone/rclone-filestore" \
@@ -358,11 +436,16 @@ assert_environment_manager_help_flags provision-packages --protocol --stdin
 assert_environment_manager_provisions_packages
 assert_environment_manager_stops_after_first_failure
 
+# ── 常用命令和工具 ────────────────────────────────────────────
+
 for command_name in cc c++ make sqlite3 psql redis-cli git curl wget jq tar zip unzip ssh scp tmux screen rg tree htop sed awk grep vim nano diff patch docker; do
   assert_command "$command_name"
 done
 
-grep -Fq 'https://mirrors.aliyun.com/ubuntu/' /etc/apt/sources.list.d/ubuntu.sources || fail "APT does not use Aliyun HTTPS"
+# ── 包管理器镜像源配置 ──────────────────────────────────────
+
+grep -Fxq "URIs: ${APT_RUNTIME_MIRROR}" /etc/apt/sources.list.d/ubuntu.sources || \
+  fail "APT runtime mirror does not match $SANDBOX_PLATFORM: $APT_RUNTIME_MIRROR"
 grep -Fq 'https://mirrors.aliyun.com/pypi/simple/' /etc/pip.conf || fail "pip does not use Aliyun"
 grep -Fxq "index-url = $UV_DEFAULT_INDEX" "$PIP_CONFIG_FILE" || fail "uv and pip use different indexes"
 grep -Fq 'https://registry.npmmirror.com' /etc/npmrc || fail "npm does not use npmmirror"
@@ -374,9 +457,12 @@ grep -Fq 'https://mirrors.aliyun.com/composer/' /home/user/.config/composer/conf
 [[ ! -e /etc/apt/apt.conf.d/docker-clean ]] || fail "APT docker-clean defeats BuildKit package caching"
 grep -Fq 'APT::Keep-Downloaded-Packages "true"' /etc/apt/apt.conf.d/keep-cache || fail "APT package caching is not enabled"
 
+# 实际依赖解析验证：确认真实请求只到达配置的国内镜像。
 assert_yarn_uses_npmmirror
 assert_bun_uses_npmmirror
 assert_bundler_uses_mirror
+
+# ── 排除项 ────────────────────────────────────────────────────
 
 assert_absent codex
 assert_absent dockerd
@@ -393,4 +479,4 @@ assert_absent rustup
 
 [[ ! -S /var/run/docker.sock ]] || fail "Docker socket must not be present"
 
-printf 'sandbox image runtime contract passed\n'
+printf 'sandbox image runtime contract passed on %s\n' "$SANDBOX_PLATFORM"

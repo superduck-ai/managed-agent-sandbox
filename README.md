@@ -1,69 +1,164 @@
 # Managed Agent Sandbox
 
-本仓库构建并发布 Open Managed Agents 使用的独立 `linux/amd64` Sandbox 镜像。它不是 Open Managed Agents Server 镜像，也不负责 Environment、Session 或 Sandbox 生命周期。其配方精简自 `codex-universal` revision `47f4f0eb5337083e2f610db0d15558932cb4901d` 中固定版本的实践：为每一种受支持的运行时安装一个精选版本，排除 Codex CLI 和多版本管理器，并保持现有 Environment Manager 与 Claude Agent 路径。镜像沿用旧运行合同，以 `root` 作为默认运行账号，`HOME=/root`，Managed Agent 工作目录仍为 `/home/user`；同时预置权限收紧的 `/root/.claude` 和合法空配置 `/root/.claude.json`，保证 Claude Code 首次启动即可安全持久化 root 配置。镜像还保留 UID/GID 1000 的 `user` 和 UID/GID 1001、home 为 `/home/claude` 的 `claude` 兼容账号，两者均使用 Bash 并具有 passwordless sudo。旧 Claude 运行布局中的 `/home/claude/.npm-global`、`/home/claude/.local/bin`、pip cache、Node 全局模块和 Claude 状态目录继续作为共享工具路径；显式切换到 `user` 或 `claude` 时，两个账号也能安全访问这些目录。
+本仓库构建并发布 **Open Managed Agents (OMA)** 使用的 Sandbox 基础镜像。
 
-## 供应链输入
+> 本仓库只负责镜像本身。它不是 OMA Server 镜像，也不管理 Environment、Session 或 Sandbox 的生命周期。
 
-`versions.env` 是可执行镜像合同中所有平台、运行时、工具版本、下载坐标、校验和和 revision 的唯一值来源。构建 wrapper 从该文件统一生成 BuildKit 参数；Dockerfile 中对应的 `ARG` 不提供重复默认值。相同文件会复制到镜像内的 `/etc/oma-sandbox-versions.env`，供运行时 verifier 读取。固定运行时通过 `/opt/<runtime>/current` 稳定链接暴露，因此 profile、`PATH` 和 verifier 不需要再次硬编码具体版本目录。
+## 镜像概述
 
-构建期 APT 统一读取 `versions.env` 固定时间点的 Ubuntu 官方 snapshot，避免滚动镜像索引使固定的 GCC/G++ 包版本突然不可解析；最终镜像使用阿里云 HTTPS APT 源，供环境预构建和运行时 `packages.apt` 使用。用于启动 TLS 的 curl CA extract 使用带日期的不可变 URL 和 SHA-256，Composer 则直接下载带版本路径的 `composer.phar` 并校验 SHA-256，不执行可变的在线 installer。Yarn 和 pnpm 同样使用 `versions.env` 固定的 npmmirror tarball URL 与 SHA-256，校验后直接解包到 `/home/claude/.npm-global`；构建不再通过 `npm install` 接受 registry 当次返回的 metadata 或同版本不同字节。
+镜像配方精简自 [`codex-universal`](https://github.com/openai/codex-universal) 的固定版本实践：为每种受支持的运行时安装一个精选版本，排除 Codex CLI 与多版本管理器，并保持现有 Environment Manager 与 Claude Agent 路径。
 
-该文件同时固定 Ubuntu AMD64 manifest、Environment Manager 和
-`rclone-filestore` OCI 制品身份。两个独立拥有的二进制都不会提交到本仓库。
-`OMA_ARTIFACT_REGISTRY` 配置制品所在的 Registry namespace，两个制品分别固定
-Linux AMD64 platform manifest Digest、版本和二进制 SHA-256。
+### 用户模型
 
-当前制品 namespace 为 `registry.gz.cvte.cn/oma`，构建脚本会自动组成两个不可变
-OCI 引用。完成 Registry 登录后，可以直接构建：
+| 账号 | UID/GID | HOME | 说明 |
+|---|---|---|---|
+| `root`（默认） | 0/0 | `/root` | 镜像默认运行账号，`WORKDIR=/home/user` |
+| `user` | 1000/1000 | `/home/user` | Managed Agent 工作目录所在账号 |
+| `claude` | 1001/1001 | `/home/claude` | 兼容账号，两者均使用 Bash 并具有 passwordless sudo |
 
-```console
-SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local \
-just sandbox-image-build
+- 预置权限收紧的 `/root/.claude`（700）和合法空配置 `/root/.claude.json`（600），Claude Code 首次启动即可安全持久化 root 配置
+- `/root/.claude/launcher-settings.json` 供 OMA 启动 Claude Code 时使用
+- `/home/claude/.npm-global`、`/home/claude/.local/bin`、pip cache、Node 全局模块和 Claude 状态目录作为共享工具路径，`user` 和 `claude` 均可安全访问
+
+### 预装运行时
+
+Python · Node.js · Go · Java (Temurin) · PHP · Ruby · Bun · Rust（含 rustfmt/Clippy/rust-analyzer/LLVM tools） · GCC/G++ · CMake · Docker CLI · Claude Code · uv · Maven · Gradle · Composer · Yarn · pnpm
+
+所有软件包管理器默认使用国内 HTTPS 镜像。pip 和 uv 使用相同的阿里云 PyPI 索引；APT 按架构读取 `versions.env`，amd64 使用阿里云，arm64 使用 TUNA 的 ubuntu-ports。npm、pnpm、Yarn 和 Bun 使用 npmmirror，Cargo 使用 RSProxy，RubyGems 和 Bundler 使用腾讯云 RubyGems。
+
+## 仓库结构
+
+| 路径 | 职责 |
+|---|---|
+| `Dockerfile` | 镜像配方，**零架构字面量**，全部通过 BuildKit 参数注入 |
+| `versions.env` | 镜像合同的唯一值来源，同时声明构建矩阵 |
+| `image/` | 被构建或复制进镜像的全部载荷 |
+| ├─ `verify-contract.sh` | 镜像内运行时合同验证器 |
+| ├─ `patch-claude-sdk-url.py` | 构建期解除 Claude Code 对 OMA `--sdk-url` 主机的限制 |
+| ├─ `config/` | profile、npmrc、gemrc、bundler、maven、gradle 等配置文件 |
+| └─ `envd-bin/` | 按版本和架构预置的 envd 二进制 |
+| `scripts/sandbox-image.sh` | CLI 入口，只负责参数解析与分发 |
+| `scripts/lib/` | 按职责拆分的模块 |
+| ├─ `common.sh` | 基础断言原语（die、contract_fail、sha256 等） |
+| ├─ `config.sh` | 版本加载、架构解析、BuildKit 参数组装 |
+| ├─ `source-contract.sh` | 静态来源合同（构建前检查） |
+| ├─ `build.sh` | 单架构构建与 OCI Manifest 发布 |
+| └─ `image-test.sh` | 构建后镜像验证（平台、大小、运行时合同） |
+| `tests/run-tests.sh` | 主机侧测试，不需要 Docker 与网络 |
+| `.github/workflows/sandbox-image.yml` | CI：主机测试、全架构来源合同与 Dockerfile 静态检查 |
+| `justfile` | 本地开发快捷命令 |
+
+## 多架构支持
+
+构建矩阵声明 `linux/amd64` 与 `linux/arm64`，两者对等：外部制品、供应链固定和 CI 验证矩阵完全相同。
+
+### 配置方式
+
+`versions.env` 使用统一的后缀命名规则管理架构相关值：
+
+```
+# 共享值（所有架构相同）
+PYTHON_VERSION=3.13.14
+RUST_VERSION=1.97.0
+
+# 按架构区分的值
+RUST_TARGET_AMD64=x86_64-unknown-linux-gnu
+RUST_TARGET_ARM64=aarch64-unknown-linux-gnu
 ```
 
-当前 Environment Manager 来自干净源码 revision
-`4a0b1c8818b3bf70a4b7320b4ebd80e8f62fe855`，版本为 `4a0b1c8`，
-二进制 SHA-256 为
-`6781f8a766b7004998f84dab5f5dae94dcd6bb0756294657c0fc5d5095ccf919`。
-BuildKit 从外部命名镜像上下文复制
-`/usr/local/bin/environment-manager`，Dockerfile 再次校验字节，并通过
-`/usr/local/bin/environment-manager` 符号链接保留命令合同。运行时合同保留
-`task-run` v0 启动路径，并通过 `provision-packages --protocol v1 --stdin`
-应用 OMA 下发的 Packages Manifest。
+- `SANDBOX_PLATFORMS` 声明构建矩阵
+- `SANDBOX_ARCH_VARS` 声明哪些变量名是架构相关的
+- 构建 wrapper 与镜像内 verifier 读取同一张表，将 `<NAME>_<ARCH>` 解析为 `<NAME>`，二者不可能产生分歧
+- Dockerfile 与 verifier 只看到不带后缀的普通名字，与单架构时期完全一致
 
-`rclone-filestore` 以只包含该二进制的独立小型 OCI 制品发布，不再从旧版
-Sandbox 镜像复制。Sandbox 从第二个外部命名镜像上下文的
-`/opt/rclone/rclone-filestore` 复制到同一路径，固定二进制 SHA-256 为
-`b778c110432734a41131906a11c43373edefedd2c44ceb9d83e2e3ff923990f4`。
-该制品是动态链接的 Linux AMD64 ELF，只依赖目标镜像已有的 glibc，并要求
-运行节点支持 AMD64 v3 指令集。镜像合同验证文件存在、可执行权限和 SHA-256；
-真实 E2B 验收还必须启动该进程并验证 filestore mount ready 流程。
+### 架构中性保证
 
-CI 和本地构建读取完全相同的 `versions.env` 配置，不需要额外配置制品地址
-Secrets；执行构建的节点需要能够访问该 Registry。OMA 不会重新构建或修改这两个
-项目。
+来源合同自动执行以下检查：
 
-所有远程运行时归档和固定的软件包管理器制品只有在与仓库校验和匹配后才会被接受。软件包管理器运行时默认使用国内 HTTPS 镜像，不会禁用 TLS 验证，也不会添加不安全的 trusted host。APT、pip 和 uv 统一使用阿里云镜像；pip 和 uv 使用相同的 PyPI 索引。npm、pnpm 和 Yarn Classic 通过共享 `/etc/npmrc` 使用 npmmirror；Bun 通过 `BUN_CONFIG_REGISTRY` 显式使用同一来源。RubyGems 和 Bundler 分别读取共享 `.gemrc` 与 `BUNDLE_USER_CONFIG`，使用腾讯云 RubyGems 镜像；Bundler 不配置官方源 fallback。
+- **禁止裸架构字面量**：Dockerfile 中出现 `x86_64`、`aarch64`、`x64`、`amd64`、`arm64` 等任何裸字面量将被拒绝
+- **交叉检查架构 token**：每个按架构区分的下载坐标必须包含该架构对应的 token（例如 arm64 的值必须含 `aarch64` 或 `arm64`），防止跨架构复制粘贴
+- **构建参数完整性**：Dockerfile 的每个 `ARG` 必须由 `versions.env` 提供值，不允许内联默认值，不允许孤立键
 
-## 本地验证
+新增架构时，若其外部制品（Environment Manager、rclone-filestore）尚未发布，来源合同会将该架构报告为 blocked 但不判定失败，`buildable-architectures` 会自动排除它，直到 `versions.env` 补齐不可变 digest 与 SHA-256。
 
-运行来源合同、版本单一真源一致性和 Dockerfile 检查：
+## 供应链安全
+
+### 单一值来源
+
+`versions.env` 是所有版本、下载坐标、校验和的唯一来源：
+
+- 构建 wrapper 从该文件生成 BuildKit 参数
+- Dockerfile 中的 `ARG` 不提供重复默认值
+- 相同文件复制到镜像内 `/etc/oma-sandbox-versions.env`，供运行时 verifier 读取
+- 来源合同检查：无 `ARG` 带内联默认值、安全关键 `ARG` 始终存在、`versions.env` 中无孤立键
+
+### 制品固定
+
+- 所有远程归档必须匹配仓库固定的 SHA-256/SHA-512 校验和
+- 构建期 APT 使用固定时间戳的 Ubuntu snapshot，避免滚动索引导致包版本不可解析
+- curl CA extract 使用带日期的不可变 URL + SHA-256
+- Yarn/pnpm 直接下载固定 tarball 并校验，不通过 `npm install` 接受 registry metadata
+- Composer 下载带版本路径的 `composer.phar` 并校验，不执行可变的在线 installer
+- `image/envd-bin/` 按版本和架构预置 envd 二进制，构建时只复制并校验 SHA-256
+- Claude Code 先校验上游 tarball，再在一次性 stage 运行固定补丁；补丁后的二进制按架构校验 SHA-256，脚本、Python 和备份不进入最终镜像
+
+### 外部 OCI 制品
+
+Environment Manager 与 rclone-filestore 由各自仓库独立发布，不提交到本仓库：
+
+- `OMA_ARTIFACT_REGISTRY` 配置制品所在的 Registry namespace（当前为 `ghcr.io/superduck-ai`）
+- BuildKit 通过外部命名镜像上下文复制二进制，Dockerfile 再次校验字节
+- 完整构建需要 GHCR 读取权限；CI 静态检查使用本地占位 context，不访问制品 Registry
+
+## 构建与验证
+
+需要 Docker、Buildx，以及读取 `versions.env` 中外部 OCI 制品的权限。
 
 ```console
-just sandbox-image-check
+just sandbox-image-architectures   # 查看声明和当前可构建的架构
+just sandbox-image-check           # 主机测试 + 全架构来源合同 + Dockerfile 检查
+just sandbox-image-test-scripts    # 仅主机侧测试
 ```
 
-完成构建后，验证镜像平台、测量未压缩 Docker 镜像大小，并强制检查默认 `root` 账户、`user`/`claude` 兼容账户、固定运行时版本、真实 Cargo 编译、软件包管理器、实用工具、镜像配置、Environment Manager、可直接调用的 `claude` 命令以及应排除的工具。Environment Manager 合同会通过一个 v1 Manifest 真实安装 apt、cargo、gem、go、npm 和 pip Packages，检查每个安装结果在约定路径或 runtime 中可见，并通过确定性失败探针验证首错停止且不执行后续 Manager。Yarn、Bun 和 Bundler 的检查会在临时项目中执行最小依赖解析，以确认真实请求只到达配置的国内镜像，因此完整验证需要能够访问这些镜像：
+完整构建与验证由发布者在可运行目标架构的环境中执行，标签按架构区分：
 
 ```console
-SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local just sandbox-image-test
+IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:<full-commit-sha>
+
+SANDBOX_IMAGE_TAG="${IMAGE_TAG}-amd64" just arch=amd64 sandbox-image-verify   # amd64 runner
+SANDBOX_IMAGE_TAG="${IMAGE_TAG}-arm64" just arch=arm64 sandbox-image-verify   # arm64 runner
 ```
 
-由 containerd 支持的引擎可能会在新加载的层首次挂载并解包前暂时报告零大小，因此测量过程会先运行一个不执行实际操作的 `/bin/true` 容器。随后读取两次 `docker image history --human=false`，并拒绝不稳定结果。它从 `RootFS.Layers` 推导权威的非空文件系统层数（将 OCI 标准空 tar DiffID 计算在内），并要求 history 在汇总精确字节数前，恰好包含这么多非零大小条目。即使截断后的响应所含总条目数仍与 RootFS 层数一样多，这也能拒绝稳定截断。三 GiB（`3,221,225,472` 字节）是报告目标，而不是硬性验收限制：命令会输出 `size_target_status=at_or_below_target` 或 `size_target_status=above_target`，但不会因此拒绝其他方面均有效的镜像。`docker image inspect .Size` 会另外报告为 `storage_size_bytes`，因为由 containerd 支持的引擎可能会在这里暴露压缩后或存储实现特定的值；该值不能替代未压缩体积测量。执行 verifier 前，会先按 SHA-256 比较仓库当前 `versions.env` 与镜像内 `/etc/oma-sandbox-versions.env`，再比较仓库与镜像内 verifier。这样即使旧镜像自己的版本合同和 verifier 彼此一致，也无法针对较新的仓库合同假通过。
+## 发布多架构镜像
 
-2026-07-22 验证的最终本地构建为 `sha256:45393bda3b3f8e46db3798969ed0695825dfa51121f617a47eba7639ec3b7afa`，包含 `3,426,549,760` 字节的未压缩层数据，比 3 GiB 参考目标高 `205,324,288` 字节。对于同一个镜像，OrbStack 报告的存储大小为 `1,271,622,083` 字节。与只安装 `rustc`、Cargo 和标准库的旧构建相比，保留单版本 rustfmt、Clippy、rust-analyzer 和 LLVM tools 使未压缩镜像增加 `285,638,656` 字节（约 272.4 MiB）；随后加入 `claude` 兼容账号、两个 home 的共享权限、sudoers 及旧 Claude 目录布局合计只再增加 `40,960` 字节（40 KiB），其中恢复 npm/pip/状态目录和 Environment Manager 链接布局只比账号版本增加 `4,096` 字节。切换为 root、补充稳定的 `claude`/`cc`/`c++` 命令和对应合同验证后，未压缩数据相对上一版增加 `28,672` 字节；为 root 初始化 Claude 配置路径又增加 `4,096` 字节；引入镜像内版本合同和固定 runtime 的 `current` 链接后又增加 `32,768` 字节；把 Yarn/pnpm 从实时 `npm install` 改为仓库固定 tarball 后增加 `24,879,104` 字节（约 23.7 MiB）。更新 Environment Manager binary 并增加 Packages runtime 合同验证后，未压缩镜像再增加 `81,920` 字节（80 KiB），OrbStack 存储大小增加 `22,779` 字节。这些实测成本被接受，不会触发硬性失败。
+推送两个已通过运行时合同的单架构标签，再用它们的不可变 digest 组装统一标签：
 
-## 构建与运行时性能
+```console
+docker push "${IMAGE_TAG}-amd64"
+docker push "${IMAGE_TAG}-arm64"
+
+SANDBOX_IMAGE_TAG="$IMAGE_TAG" just sandbox-image-publish-manifest \
+  amd64=registry.example/sandbox@sha256:... \
+  arm64=registry.example/sandbox@sha256:...
+```
+
+业务方只使用不带架构后缀的统一标签；Docker 自动选择匹配的平台镜像。
+
+## CI 流程
+
+`.github/workflows/sandbox-image.yml` 在 PR 或手动触发时只执行静态检查：
+
+1. 运行主机侧测试。
+2. 验证 amd64、arm64 的来源与版本合同。
+3. 对每个架构执行 Dockerfile `buildx --check`。
+
+CI 不拉取外部 OCI 制品，不构建或推送镜像，也不更新 E2B Template。
+完整镜像构建、运行时合同验证和 Manifest 发布均由发布者在本地执行。第三方
+Actions 均固定到 commit SHA，Checkout 不持久化凭据。
+
+## 镜像优化与历史测量
+
+以下测量记录来自 2026-09-22 的单架构源码基线，早于当前多架构与 envd 更新；数值不代表当前镜像的体积。
 
 镜像拉取与 CubeSandbox 模板制作需要分别看待。合并小配置文件后，最终镜像减少 12 个文件系统层；大型工具链仍分别保留层，以便复用未变更的内容。Yarn/pnpm 在 COPY 时直接设置 UID/GID 1001，后续只修正所有者不符的文件，避免递归 chown 把相同的软件包内容再次写进镜像层。以上主要减少拉取和逐层解包成本，并不减少最终文件树中的文件数量。
 
@@ -80,11 +175,3 @@ SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local just sandbox-
 压缩层数据减少约 108.4 MiB（8.86%），未压缩层数据减少约 278.1 MiB（8.44%）。最终文件树的主要减重来自 LLVM 去重约 190.2 MiB、Python/Ruby 调试信息剥离约 61.6 MiB；Yarn/pnpm 的约 26.2 MiB 重复层不会额外占用最终文件树。当前源码基线的 35 层与历史部署镜像的 37 层不同，不应跨版本直接比较。
 
 按当前 CubeSandbox 默认容量公式估算，受测文件树对应的 ext4 可由 3.75 GiB 降至 3.50 GiB；实际以部署版本、模板配置和重新制作后的测量为准。文件数量基本不变，因此不能据此推导模板制作耗时按相同比例下降，也不代表已完成内网端到端性能验收。
-
-Dockerfile 将从源码构建的运行时和可下载运行时制品拆分到独立 stage。它禁用 Ubuntu 的 `docker-clean` hook，并启用 `APT::Keep-Downloaded-Packages`，使 BuildKit cache mount 可以在 stage 和多次构建之间真正保留已下载的软件包；这些 mount 不会提交进最终镜像。CI 还使用持久化 Buildx layer cache。所有固定制品下载都会在各自 stage 内重试部分传输、HTTP/2 stream 失败和其他瞬时网络错误，避免单个归档下载中断就立即丢弃并行构建结果；每个完成下载的文件仍必须匹配仓库固定的校验和。这一点对经过优化的 Python PGO/LTO 构建尤其重要。最终镜像只复制安装产物，不复制编译器源码树或下载归档。Rust 使用同一份固定 Rust 1.97.0 AMD64 发行包安装 `rustc`、Cargo、标准库、rustfmt、Clippy、rust-analyzer 和 LLVM tools；不引入历史工具链或浮动 channel。
-
-## 发布与部署
-
-`Sandbox base image` workflow 始终会在相关 Pull Request 上检查来源合同和版本单一真源一致性，包括 BuildKit 参数覆盖、无重复 Dockerfile 默认值、固定 Ubuntu snapshot、不可变制品 URL、稳定 runtime 路径，以及 verifier 对镜像内版本合同的读取。发布 workflow 使用 commit SHA 固定第三方 Actions，并禁止 checkout 在工作目录中持久化凭据。手动触发会执行完整 AMD64 构建和直接容器合同验证。显式启用其 `publish` 输入后，它会推送经过验证的同一个 daemon 镜像，确认已发布 descriptor（OCI index）或 config（单 manifest）的身份等于经过测试的本地身份，并记录不可变 registry manifest digest。
-
-发布过程不会部署或替换 E2B Base Template。提升操作被有意设计为独立步骤，必须使用经过验证的 `image@sha256:...` 身份，并获得单独授权。
