@@ -6,7 +6,7 @@
 
 `versions.env` 是可执行镜像合同中所有平台、运行时、工具版本、下载坐标、校验和和 revision 的唯一值来源。构建 wrapper 从该文件统一生成 BuildKit 参数；Dockerfile 中对应的 `ARG` 不提供重复默认值。相同文件会复制到镜像内的 `/etc/oma-sandbox-versions.env`，供运行时 verifier 读取。固定运行时通过 `/opt/<runtime>/current` 稳定链接暴露，因此 profile、`PATH` 和 verifier 不需要再次硬编码具体版本目录。
 
-构建期 APT 统一读取 `versions.env` 固定时间点的 Ubuntu 官方 snapshot，避免滚动镜像索引使固定的 GCC/G++ 包版本突然不可解析；最终镜像会把 APT source 恢复为 TUNA，供运行时 `packages.apt` 使用。用于启动 TLS 的 curl CA extract 使用带日期的不可变 URL 和 SHA-256，Composer 则直接下载带版本路径的 `composer.phar` 并校验 SHA-256，不执行可变的在线 installer。Yarn 和 pnpm 同样使用 `versions.env` 固定的 npmmirror tarball URL 与 SHA-256，校验后直接解包到 `/home/claude/.npm-global`；构建不再通过 `npm install` 接受 registry 当次返回的 metadata 或同版本不同字节。
+构建期 APT 统一读取 `versions.env` 固定时间点的 Ubuntu 官方 snapshot，避免滚动镜像索引使固定的 GCC/G++ 包版本突然不可解析；最终镜像使用阿里云 HTTPS APT 源，供环境预构建和运行时 `packages.apt` 使用。用于启动 TLS 的 curl CA extract 使用带日期的不可变 URL 和 SHA-256，Composer 则直接下载带版本路径的 `composer.phar` 并校验 SHA-256，不执行可变的在线 installer。Yarn 和 pnpm 同样使用 `versions.env` 固定的 npmmirror tarball URL 与 SHA-256，校验后直接解包到 `/home/claude/.npm-global`；构建不再通过 `npm install` 接受 registry 当次返回的 metadata 或同版本不同字节。
 
 该文件同时固定 Ubuntu AMD64 manifest、Environment Manager 和
 `rclone-filestore` OCI 制品身份。两个独立拥有的二进制都不会提交到本仓库。
@@ -43,7 +43,7 @@ CI 和本地构建读取完全相同的 `versions.env` 配置，不需要额外�
 Secrets；执行构建的节点需要能够访问该 Registry。OMA 不会重新构建或修改这两个
 项目。
 
-所有远程运行时归档和固定的软件包管理器制品只有在与仓库校验和匹配后才会被接受。软件包管理器运行时默认使用国内 HTTPS 镜像，不会禁用 TLS 验证，也不会添加不安全的 trusted host。npm、pnpm 和 Yarn Classic 通过共享 `/etc/npmrc` 使用 npmmirror；Bun 通过 `BUN_CONFIG_REGISTRY` 显式使用同一来源。RubyGems 和 Bundler 分别读取共享 `.gemrc` 与 `BUNDLE_USER_CONFIG`，使用腾讯云 RubyGems 镜像；Bundler 不配置官方源 fallback。
+所有远程运行时归档和固定的软件包管理器制品只有在与仓库校验和匹配后才会被接受。软件包管理器运行时默认使用国内 HTTPS 镜像，不会禁用 TLS 验证，也不会添加不安全的 trusted host。APT、pip 和 uv 统一使用阿里云镜像；pip 和 uv 使用相同的 PyPI 索引。npm、pnpm 和 Yarn Classic 通过共享 `/etc/npmrc` 使用 npmmirror；Bun 通过 `BUN_CONFIG_REGISTRY` 显式使用同一来源。RubyGems 和 Bundler 分别读取共享 `.gemrc` 与 `BUNDLE_USER_CONFIG`，使用腾讯云 RubyGems 镜像；Bundler 不配置官方源 fallback。
 
 ## 本地验证
 
@@ -64,6 +64,22 @@ SANDBOX_IMAGE_TAG=ghcr.io/superduck-ai/managed-agent-sandbox:local just sandbox-
 2026-07-22 验证的最终本地构建为 `sha256:45393bda3b3f8e46db3798969ed0695825dfa51121f617a47eba7639ec3b7afa`，包含 `3,426,549,760` 字节的未压缩层数据，比 3 GiB 参考目标高 `205,324,288` 字节。对于同一个镜像，OrbStack 报告的存储大小为 `1,271,622,083` 字节。与只安装 `rustc`、Cargo 和标准库的旧构建相比，保留单版本 rustfmt、Clippy、rust-analyzer 和 LLVM tools 使未压缩镜像增加 `285,638,656` 字节（约 272.4 MiB）；随后加入 `claude` 兼容账号、两个 home 的共享权限、sudoers 及旧 Claude 目录布局合计只再增加 `40,960` 字节（40 KiB），其中恢复 npm/pip/状态目录和 Environment Manager 链接布局只比账号版本增加 `4,096` 字节。切换为 root、补充稳定的 `claude`/`cc`/`c++` 命令和对应合同验证后，未压缩数据相对上一版增加 `28,672` 字节；为 root 初始化 Claude 配置路径又增加 `4,096` 字节；引入镜像内版本合同和固定 runtime 的 `current` 链接后又增加 `32,768` 字节；把 Yarn/pnpm 从实时 `npm install` 改为仓库固定 tarball 后增加 `24,879,104` 字节（约 23.7 MiB）。更新 Environment Manager binary 并增加 Packages runtime 合同验证后，未压缩镜像再增加 `81,920` 字节（80 KiB），OrbStack 存储大小增加 `22,779` 字节。这些实测成本被接受，不会触发硬性失败。
 
 ## 构建与运行时性能
+
+镜像拉取与 CubeSandbox 模板制作需要分别看待。合并小配置文件后，最终镜像减少 12 个文件系统层；大型工具链仍分别保留层，以便复用未变更的内容。Yarn/pnpm 在 COPY 时直接设置 UID/GID 1001，后续只修正所有者不符的文件，避免递归 chown 把相同的软件包内容再次写进镜像层。以上主要减少拉取和逐层解包成本，并不减少最终文件树中的文件数量。
+
+真正缩小最终文件树的处理在各自 builder 中、复制到 runtime 之前完成：Python 和 Ruby 的解释器及共享库使用 `strip --strip-debug` 去掉原生调试信息；Rust 的 LLVM tools 如果携带与主工具链字节相同的 LLVM 动态库，则通过相对符号链接复用主工具链的文件。比较不相同或文件不存在时保持原样。所有语言、包管理器、头文件和 Rust 工具组件继续保留；代价是 Python/Ruby 自身及随附原生扩展不再包含 C 级调试信息。运行时验收会实际加载 Python/Ruby 原生扩展，并启动 LLVM tools，覆盖这些处理可能影响的动态链接路径。
+
+2026-09-22 使用相同 `versions.env` 分别完整构建改动前后镜像，实测如下。压缩体积取 OCI manifest 中 gzip layer 的字节数之和；未压缩体积在镜像首次挂载后读取两次 history，并按 RootFS 非空层数核验完整性。
+
+| 指标 | 优化前 | 优化后 |
+| --- | ---: | ---: |
+| RootFS 层数（含标准空层） | 35 | 23 |
+| gzip 层总字节数 | 1,283,002,276 | 1,169,313,343 |
+| 未压缩层总字节数 | 3,457,130,496 | 3,165,511,680 |
+
+压缩层数据减少约 108.4 MiB（8.86%），未压缩层数据减少约 278.1 MiB（8.44%）。最终文件树的主要减重来自 LLVM 去重约 190.2 MiB、Python/Ruby 调试信息剥离约 61.6 MiB；Yarn/pnpm 的约 26.2 MiB 重复层不会额外占用最终文件树。当前源码基线的 35 层与历史部署镜像的 37 层不同，不应跨版本直接比较。
+
+按当前 CubeSandbox 默认容量公式估算，受测文件树对应的 ext4 可由 3.75 GiB 降至 3.50 GiB；实际以部署版本、模板配置和重新制作后的测量为准。文件数量基本不变，因此不能据此推导模板制作耗时按相同比例下降，也不代表已完成内网端到端性能验收。
 
 Dockerfile 将从源码构建的运行时和可下载运行时制品拆分到独立 stage。它禁用 Ubuntu 的 `docker-clean` hook，并启用 `APT::Keep-Downloaded-Packages`，使 BuildKit cache mount 可以在 stage 和多次构建之间真正保留已下载的软件包；这些 mount 不会提交进最终镜像。CI 还使用持久化 Buildx layer cache。所有固定制品下载都会在各自 stage 内重试部分传输、HTTP/2 stream 失败和其他瞬时网络错误，避免单个归档下载中断就立即丢弃并行构建结果；每个完成下载的文件仍必须匹配仓库固定的校验和。这一点对经过优化的 Python PGO/LTO 构建尤其重要。最终镜像只复制安装产物，不复制编译器源码树或下载归档。Rust 使用同一份固定 Rust 1.97.0 AMD64 发行包安装 `rustc`、Cargo、标准库、rustfmt、Clippy、rust-analyzer 和 LLVM tools；不引入历史工具链或浮动 channel。
 

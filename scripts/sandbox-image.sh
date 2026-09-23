@@ -190,7 +190,7 @@ verify_version_contract_sources() {
   require_literal "$dockerfile" 'ADD --checksum=${CA_BUNDLE_SHA256}'
   require_literal "$dockerfile" '${CA_BUNDLE_URL} /etc/ssl/certs/ca-certificates.crt'
   require_literal "$dockerfile" 'https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT_TIMESTAMP}/'
-  require_literal "$dockerfile" 'https://mirrors.tuna.tsinghua.edu.cn/ubuntu/'
+  require_literal "$dockerfile" 'https://mirrors.aliyun.com/ubuntu/'
   require_literal "$dockerfile" '"https://getcomposer.org/download/${COMPOSER_VERSION}/composer.phar"'
   reject_literal "$dockerfile" 'https://getcomposer.org/installer'
   require_literal "$dockerfile" '"https://github.com/adoptium/temurin25-binaries/releases/download/${JAVA_RELEASE_TAG}/${JAVA_ARCHIVE}"'
