@@ -24,7 +24,7 @@
 
 Python · Node.js · Go · Java (Temurin) · PHP · Ruby · Bun · Rust（含 rustfmt/Clippy/rust-analyzer/LLVM tools） · GCC/G++ · CMake · Docker CLI · Claude Code · uv · Maven · Gradle · Composer · Yarn · pnpm
 
-所有软件包管理器默认使用国内 HTTPS 镜像（npmmirror、TUNA、Aliyun、RSProxy、腾讯云 RubyGems）。
+所有软件包管理器默认使用国内 HTTPS 镜像。pip 和 uv 使用相同的阿里云 PyPI 索引；APT 按架构读取 `versions.env`，amd64 使用阿里云，arm64 使用 TUNA 的 ubuntu-ports。npm、pnpm、Yarn 和 Bun 使用 npmmirror，Cargo 使用 RSProxy，RubyGems 和 Bundler 使用腾讯云 RubyGems。
 
 ## 仓库结构
 
@@ -155,3 +155,23 @@ SANDBOX_IMAGE_TAG="$IMAGE_TAG" just sandbox-image-publish-manifest \
 CI 不拉取外部 OCI 制品，不构建或推送镜像，也不更新 E2B Template。
 完整镜像构建、运行时合同验证和 Manifest 发布均由发布者在本地执行。第三方
 Actions 均固定到 commit SHA，Checkout 不持久化凭据。
+
+## 镜像优化与历史测量
+
+以下测量记录来自 2026-09-22 的单架构源码基线，早于当前多架构与 envd 更新；数值不代表当前镜像的体积。
+
+镜像拉取与 CubeSandbox 模板制作需要分别看待。合并小配置文件后，最终镜像减少 12 个文件系统层；大型工具链仍分别保留层，以便复用未变更的内容。Yarn/pnpm 在 COPY 时直接设置 UID/GID 1001，后续只修正所有者不符的文件，避免递归 chown 把相同的软件包内容再次写进镜像层。以上主要减少拉取和逐层解包成本，并不减少最终文件树中的文件数量。
+
+真正缩小最终文件树的处理在各自 builder 中、复制到 runtime 之前完成：Python 和 Ruby 的解释器及共享库使用 `strip --strip-debug` 去掉原生调试信息；Rust 的 LLVM tools 如果携带与主工具链字节相同的 LLVM 动态库，则通过相对符号链接复用主工具链的文件。比较不相同或文件不存在时保持原样。所有语言、包管理器、头文件和 Rust 工具组件继续保留；代价是 Python/Ruby 自身及随附原生扩展不再包含 C 级调试信息。运行时验收会实际加载 Python/Ruby 原生扩展，并启动 LLVM tools，覆盖这些处理可能影响的动态链接路径。
+
+2026-09-22 使用相同 `versions.env` 分别完整构建改动前后镜像，实测如下。压缩体积取 OCI manifest 中 gzip layer 的字节数之和；未压缩体积在镜像首次挂载后读取两次 history，并按 RootFS 非空层数核验完整性。
+
+| 指标 | 优化前 | 优化后 |
+| --- | ---: | ---: |
+| RootFS 层数（含标准空层） | 35 | 23 |
+| gzip 层总字节数 | 1,283,002,276 | 1,169,313,343 |
+| 未压缩层总字节数 | 3,457,130,496 | 3,165,511,680 |
+
+压缩层数据减少约 108.4 MiB（8.86%），未压缩层数据减少约 278.1 MiB（8.44%）。最终文件树的主要减重来自 LLVM 去重约 190.2 MiB、Python/Ruby 调试信息剥离约 61.6 MiB；Yarn/pnpm 的约 26.2 MiB 重复层不会额外占用最终文件树。当前源码基线的 35 层与历史部署镜像的 37 层不同，不应跨版本直接比较。
+
+按当前 CubeSandbox 默认容量公式估算，受测文件树对应的 ext4 可由 3.75 GiB 降至 3.50 GiB；实际以部署版本、模板配置和重新制作后的测量为准。文件数量基本不变，因此不能据此推导模板制作耗时按相同比例下降，也不代表已完成内网端到端性能验收。

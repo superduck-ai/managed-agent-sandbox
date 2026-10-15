@@ -321,7 +321,7 @@ assert_equals 'amd64 解析为 x64 Claude Code 包' 'claude-code-linux-x64' "$CL
 assert_equals 'amd64 解析为 x86_64 机器名' 'x86_64' "$UNAME_MACHINE"
 assert_equals 'amd64 推导出 linux/amd64 平台' 'linux/amd64' "$SANDBOX_PLATFORM"
 assert_equals 'amd64 使用 Ubuntu 标准源镜像' \
-  'https://mirrors.tuna.tsinghua.edu.cn/ubuntu/' "$APT_RUNTIME_MIRROR"
+  'https://mirrors.aliyun.com/ubuntu/' "$APT_RUNTIME_MIRROR"
 AMD64_UBUNTU_DIGEST="$UBUNTU_DIGEST"
 AMD64_ENVD_SHA256="$ENVD_SHA256"
 
@@ -546,7 +546,7 @@ check 'amd64 APT 运行时镜像用于 arm64 会被拒绝' \
     source '$ROOT_DIR/scripts/lib/source-contract.sh'
     sandbox_load_versions
     sandbox_select_arch arm64
-    APT_RUNTIME_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
+    APT_RUNTIME_MIRROR=https://mirrors.aliyun.com/ubuntu/
     ! sandbox_verify_arch_relationships
   "
 

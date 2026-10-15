@@ -361,6 +361,7 @@ sudo -n -H -u claude bash -lc '
 
 assert_output_contains "Python ${PYTHON_VERSION}" python --version
 assert_output_contains 'pip ' python -m pip --version
+python -c 'import bz2, ctypes, lzma, sqlite3, ssl; assert ssl.OPENSSL_VERSION; assert sqlite3.connect(":memory:").execute("select 1").fetchone() == (1,)'
 assert_output_contains "uv ${UV_VERSION}" uv --version
 assert_output_contains "v${NODE_VERSION}" node --version
 assert_output_contains "${YARN_VERSION}" yarn --version
@@ -392,6 +393,7 @@ assert_output_contains 'rust-analyzer ' rust-analyzer --version
 rust_sysroot="$(rustc --print sysroot)"
 for llvm_tool in llvm-cov llvm-profdata; do
   [[ -x "$rust_sysroot/lib/rustlib/${RUST_TARGET}/bin/$llvm_tool" ]] || fail "missing Rust LLVM tool: $llvm_tool"
+  "$rust_sysroot/lib/rustlib/${RUST_TARGET}/bin/$llvm_tool" --version >/dev/null || fail "Rust LLVM tool failed to load: $llvm_tool"
 done
 
 # Cargo 实际编译链接测试
@@ -399,6 +401,7 @@ assert_cargo_builds
 
 # Ruby
 assert_output_contains "ruby ${RUBY_VERSION}" ruby --version
+ruby -ropenssl -rpsych -rzlib -rfiddle -e 'abort "Ruby native extensions failed" unless Zlib.inflate(Zlib.deflate("sandbox")) == "sandbox"'
 assert_command gem
 assert_command bundle
 assert_output_contains 'https://mirrors.cloud.tencent.com/rubygems/' gem sources --list
@@ -443,7 +446,8 @@ done
 
 grep -Fxq "URIs: ${APT_RUNTIME_MIRROR}" /etc/apt/sources.list.d/ubuntu.sources || \
   fail "APT runtime mirror does not match $SANDBOX_PLATFORM: $APT_RUNTIME_MIRROR"
-grep -Fq 'https://pypi.tuna.tsinghua.edu.cn/simple' /etc/pip.conf || fail "pip does not use TUNA"
+grep -Fq 'https://mirrors.aliyun.com/pypi/simple/' /etc/pip.conf || fail "pip does not use Aliyun"
+grep -Fxq "index-url = $UV_DEFAULT_INDEX" "$PIP_CONFIG_FILE" || fail "uv and pip use different indexes"
 grep -Fq 'https://registry.npmmirror.com' /etc/npmrc || fail "npm does not use npmmirror"
 grep -Fq 'https://goproxy.cn,direct' /etc/environment || fail "Go proxy is not configured"
 grep -Fq 'sparse+https://rsproxy.cn/index/' /home/user/.cargo/config.toml || fail "Cargo does not use RSProxy"

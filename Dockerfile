@@ -38,6 +38,7 @@ RUN chmod 0644 /etc/ssl/certs/ca-certificates.crt \
 
 # Keep expensive source builds in independent stages so BuildKit can reuse each
 # runtime without carrying compilers, source trees, or archives into the image.
+# Strip native debug information before COPY, so it never enters runtime layers.
 
 ### PYTHON ###
 
@@ -68,6 +69,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && make install \
     && find "/opt/python/${PYTHON_VERSION}" -type d -name __pycache__ -prune -exec rm -rf '{}' + \
     && find "/opt/python/${PYTHON_VERSION}" -type f -name '*.py[co]' -delete
+
+# Keep slimming separate from compilation so existing compiler output is reusable.
+RUN strip --strip-debug "/opt/python/${PYTHON_VERSION}/bin/python${PYTHON_VERSION%.*}" \
+    && find "/opt/python/${PYTHON_VERSION}" -type f \( -name '*.so' -o -name '*.so.*' \) -exec strip --strip-debug '{}' +
 
 ### PHP ###
 
@@ -134,6 +139,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && make -j"$(nproc)" \
     && make install \
     && find "/opt/ruby/${RUBY_VERSION}" -type f \( -name '*.a' -o -name '*.c' \) -delete
+
+RUN strip --strip-debug "/opt/ruby/${RUBY_VERSION}/bin/ruby" \
+    && find "/opt/ruby/${RUBY_VERSION}" -type f \( -name '*.so' -o -name '*.so.*' \) -exec strip --strip-debug '{}' +
 
 ### PREBUILT RUNTIME ASSETS ###
 
@@ -240,6 +248,17 @@ RUN curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
       --components="rustc,rust-std-${RUST_TARGET},cargo,rustfmt-preview,clippy-preview,rust-analyzer-preview,llvm-tools-preview" \
     && rm -rf "/opt/rust/${RUST_VERSION}/share/doc"
 
+# LLVM tools can ship a second copy of rustc's shared LLVM library. Reuse it only
+# when both payloads are byte-identical; retain every tool and its expected path.
+RUN for llvm_library in "/opt/rust/${RUST_VERSION}/lib/rustlib/${RUST_TARGET}/lib/"libLLVM.so*; do \
+      [ -f "$llvm_library" ] || continue; \
+      library_name="${llvm_library##*/}"; \
+      shared_library="/opt/rust/${RUST_VERSION}/lib/$library_name"; \
+      if [ -f "$shared_library" ] && cmp -s "$shared_library" "$llvm_library"; then \
+        ln -sfn "../../../$library_name" "$llvm_library"; \
+      fi; \
+    done
+
 ### DEVELOPMENT TOOL ASSETS ###
 
 # Collect uv, Maven, Gradle, Composer, and the Docker CLI for the
@@ -336,6 +355,26 @@ FROM --platform=${SANDBOX_PLATFORM} environment_manager AS environment_manager_s
 # pins the accepted per-architecture manifest and payload bytes.
 FROM --platform=${SANDBOX_PLATFORM} rclone_filestore AS rclone_filestore_source
 
+### RUNTIME CONFIGURATION FILES ###
+
+# Assemble tiny files independently, then copy them into the runtime in one
+# layer. Keep large toolchains in separate layers so unchanged ones stay reusable.
+FROM scratch AS runtime_config
+COPY image/config/pip.conf /etc/pip.conf
+COPY image/config/npmrc /etc/npmrc
+COPY image/config/sudoers-user /etc/sudoers.d/user
+COPY image/config/sudoers-claude /etc/sudoers.d/claude
+COPY image/config/cargo-config.toml /home/user/.cargo/config.toml
+COPY image/config/maven-settings.xml /home/user/.m2/settings.xml
+COPY image/config/gradle-init.gradle /home/user/.gradle/init.gradle
+COPY image/config/gemrc /home/user/.gemrc
+COPY image/config/bundler-config /home/user/.bundle/config
+COPY image/config/composer-config.json /home/user/.config/composer/config.json
+COPY image/config/launcher-settings.json /root/.claude/launcher-settings.json
+COPY image/verify-contract.sh /usr/local/bin/verify-sandbox-contract
+COPY image/config/profile.sh /etc/profile.d/oma-sandbox.sh
+COPY versions.env /etc/oma-sandbox-versions.env
+
 ### FINAL RUNTIME IMAGE ###
 
 FROM base AS runtime
@@ -374,7 +413,7 @@ ENV HOME=/home/user \
     CARGO_HOME=/home/user/.cargo \
     GOBIN=/home/user/go/bin \
     GOPROXY=https://goproxy.cn,direct \
-    UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple \
+    UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ \
     UV_NO_PROGRESS=1 \
     NPM_CONFIG_USERCONFIG=/etc/npmrc \
     BUN_CONFIG_REGISTRY=https://registry.npmmirror.com \
@@ -424,7 +463,7 @@ COPY --from=node_asset /opt/node/ /opt/node/
 COPY --from=go_asset /opt/go/ /opt/go/
 COPY --from=java_asset /opt/java/ /opt/java/
 COPY --from=bun_asset /opt/bun/ /opt/bun/
-COPY --from=node_package_manager_assets /opt/node-package-managers/ /home/claude/.npm-global/
+COPY --from=node_package_manager_assets --chown=1001:1001 /opt/node-package-managers/ /home/claude/.npm-global/
 COPY --from=rust_asset /opt/rust/ /opt/rust/
 COPY --from=tool_assets /opt/tools/bin/ /usr/local/bin/
 COPY --from=tool_assets /opt/maven/ /opt/maven/
@@ -436,20 +475,7 @@ COPY image/envd-bin/envd-v${ENVD_VERSION}-linux-${ENVD_ARCH} /usr/bin/envd
 
 ### PACKAGE MANAGER, SUDO, AND SHELL CONFIGURATION ###
 
-COPY image/config/pip.conf /etc/pip.conf
-COPY image/config/npmrc /etc/npmrc
-COPY image/config/sudoers-user /etc/sudoers.d/user
-COPY image/config/sudoers-claude /etc/sudoers.d/claude
-COPY image/config/cargo-config.toml /home/user/.cargo/config.toml
-COPY image/config/maven-settings.xml /home/user/.m2/settings.xml
-COPY image/config/gradle-init.gradle /home/user/.gradle/init.gradle
-COPY image/config/gemrc /home/user/.gemrc
-COPY image/config/bundler-config /home/user/.bundle/config
-COPY image/config/composer-config.json /home/user/.config/composer/config.json
-COPY image/config/launcher-settings.json /root/.claude/launcher-settings.json
-COPY image/verify-contract.sh /usr/local/bin/verify-sandbox-contract
-COPY image/config/profile.sh /etc/profile.d/oma-sandbox.sh
-COPY versions.env /etc/oma-sandbox-versions.env
+COPY --from=runtime_config / /
 
 ### RUNTIME LINKS, USERS, AND SHARED DIRECTORIES ###
 
@@ -504,7 +530,7 @@ RUN echo "${ENVD_SHA256}  /usr/bin/envd" | sha256sum --check --strict \
     && printf '{}\n' > /root/.claude.json \
     && chmod 0700 /root/.claude \
     && chmod 0600 /root/.claude.json \
-    && chown -R claude:claude /home/claude \
+    && find /home/claude \( ! -user claude -o ! -group claude \) -exec chown -h claude:claude '{}' + \
     && chown -R user:user /home/user \
     && chmod 2770 /home/claude /home/user \
     && chmod 2775 \
@@ -521,7 +547,7 @@ RUN echo "${ENVD_SHA256}  /usr/bin/envd" | sha256sum --check --strict \
       /home/claude/project \
     && printf '%s\n' \
       'GOPROXY=https://goproxy.cn,direct' \
-      'UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple' \
+      'UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/' \
       'NPM_CONFIG_USERCONFIG=/etc/npmrc' \
       'BUN_CONFIG_REGISTRY=https://registry.npmmirror.com' \
       'PIP_CACHE_DIR=/home/claude/.cache/pip' \

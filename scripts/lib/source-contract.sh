@@ -261,7 +261,7 @@ sandbox_verify_arch_relationships() {
   # 按架构选择对应的 APT 运行时镜像和预期 token 集合。
   case "$arch" in
     amd64)
-      expected_apt_runtime_mirror='https://mirrors.tuna.tsinghua.edu.cn/ubuntu/'
+      expected_apt_runtime_mirror='https://mirrors.aliyun.com/ubuntu/'
       sandbox_verify_arch_tokens x86_64 x64 amd64 || return 1
       ;;
     arm64)
