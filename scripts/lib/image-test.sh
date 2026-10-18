@@ -178,6 +178,8 @@ sandbox_test_image() {
   docker run --rm --platform "$SANDBOX_PLATFORM" \
     --entrypoint /usr/local/bin/verify-sandbox-contract \
     "$image_ref"
+  docker run --rm --platform "$SANDBOX_PLATFORM" \
+    --entrypoint /usr/local/bin/verify-toolkit "$image_ref" || return 1
   # envd 存活检查。
   sandbox_verify_envd_health "$image_ref"
 }

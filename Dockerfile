@@ -606,3 +606,32 @@ LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
 
 EXPOSE 49983
 ENTRYPOINT ["/usr/bin/envd", "-isnotfc", "-port", "49983"]
+
+FROM runtime AS toolkit
+ARG MERMAID_VERSION
+ARG GOPLS_VERSION
+USER root
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/oma-tools-browsers
+COPY image/toolkit/office /opt/oma-office
+COPY image/toolkit/runtime /opt/oma-tools
+COPY --chmod=0755 image/toolkit/office/environment-manager /opt/oma-office/environment-manager
+COPY --chmod=0755 image/toolkit/verify.sh /usr/local/bin/verify-toolkit
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      libreoffice-writer libreoffice-calc libreoffice-impress poppler-utils \
+      fonts-noto-cjk fonts-dejavu-core graphviz pandoc qpdf \
+      tesseract-ocr tesseract-ocr-chi-sim ffmpeg sox imagemagick plantuml espeak-ng \
+    && python3 -m pip install --no-cache-dir -r /opt/oma-office/requirements.txt -r /opt/oma-tools/requirements.txt \
+    && python3 -m playwright install --with-deps --only-shell chromium \
+    && PUPPETEER_SKIP_DOWNLOAD=true npm install -g "@mermaid-js/mermaid-cli@${MERMAID_VERSION}" \
+    && npm cache clean --force \
+    && python3 /opt/oma-tools/install_assets.py \
+    && GOBIN=/usr/local/bin go install "golang.org/x/tools/gopls@${GOPLS_VERSION}" \
+    && go clean -modcache -cache \
+    && ln -s skills/oma-office/scripts/render.py /opt/oma-office/render.py \
+    && ln -s skills/oma-office/scripts/check_metadata.py /opt/oma-office/check_metadata.py \
+    && ln -sfn /opt/oma-office/environment-manager /usr/local/bin/environment-manager \
+    && printf '%s\n' '#!/bin/sh' 'exec /home/user/.local/share/oma/python/bin/python3 /opt/oma-tools/cli.py "$@"' > /usr/local/bin/oma-tools \
+    && chmod 0755 /usr/local/bin/oma-tools \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+WORKDIR /home/user

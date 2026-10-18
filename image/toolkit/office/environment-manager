@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /home/user/.local/share/oma/python/bin/python3 /opt/oma-office/slides/manager.py "$@"

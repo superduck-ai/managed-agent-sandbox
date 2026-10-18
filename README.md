@@ -6,7 +6,7 @@
 
 ## 镜像概述
 
-镜像配方精简自 [`codex-universal`](https://github.com/openai/codex-universal) 的固定版本实践：为每种受支持的运行时安装一个精选版本，排除 Codex CLI 与多版本管理器，并保持现有 Environment Manager 与 Claude Agent 路径。
+镜像配方精简自 [`codex-universal`](https://github.com/openai/codex-universal) 的固定版本实践：为每种受支持的运行时安装一个精选版本，排除 Codex CLI 与多版本管理器，并保留原 Environment Manager 二进制与 Claude Agent 路径。默认镜像同时包含办公、音视频、隔离浏览器、图表与本地 MCP 工具；详见 [工具内容与云端发布](docs/toolkit.md)。
 
 ### 用户模型
 
@@ -35,6 +35,7 @@ Python · Node.js · Go · Java (Temurin) · PHP · Ruby · Bun · Rust（含 ru
 | `image/` | 被构建或复制进镜像的全部载荷 |
 | ├─ `verify-contract.sh` | 镜像内运行时合同验证器 |
 | ├─ `patch-claude-sdk-url.py` | 构建期解除 Claude Code 对 OMA `--sdk-url` 主机的限制 |
+| ├─ `toolkit/` | 办公、媒体、浏览器、图表、Skill 和 MCP 服务载荷 |
 | ├─ `config/` | profile、npmrc、gemrc、bundler、maven、gradle 等配置文件 |
 | └─ `envd-bin/` | 按版本和架构预置的 envd 二进制 |
 | `scripts/sandbox-image.sh` | CLI 入口，只负责参数解析与分发 |
@@ -85,7 +86,7 @@ RUST_TARGET_ARM64=aarch64-unknown-linux-gnu
 
 ### 单一值来源
 
-`versions.env` 是所有版本、下载坐标、校验和的唯一来源：
+`versions.env` 是基础运行时版本、下载坐标、校验和及 Mermaid/gopls 版本的唯一来源。工具层 Python 顶层依赖分别固定在 `image/toolkit/{office,runtime}/requirements.txt`，图表二进制与 Whisper 权重的坐标和 SHA-256 固定在 `image/toolkit/runtime/assets.json`：
 
 - 构建 wrapper 从该文件生成 BuildKit 参数
 - Dockerfile 中的 `ARG` 不提供重复默认值
@@ -148,12 +149,12 @@ SANDBOX_IMAGE_TAG="$IMAGE_TAG" just sandbox-image-publish-manifest \
 
 `.github/workflows/sandbox-image.yml` 在 PR 或手动触发时只执行静态检查：
 
-1. 运行主机侧测试。
+1. 运行主机侧测试，包括工具源码、依赖固定、Agent 配置与 Skill 打包合同。
 2. 验证 amd64、arm64 的来源与版本合同。
 3. 对每个架构执行 Dockerfile `buildx --check`。
 
 CI 不拉取外部 OCI 制品，不构建或推送镜像，也不更新 E2B Template。
-完整镜像构建、运行时合同验证和 Manifest 发布均由发布者在本地执行。第三方
+完整镜像构建、运行时合同验证和 Manifest 发布均由发布者在目标架构环境执行。`test-image` 会在基础运行时合同后执行 `/usr/local/bin/verify-toolkit` 的真实工具测试。第三方
 Actions 均固定到 commit SHA，Checkout 不持久化凭据。
 
 ## 镜像优化与历史测量

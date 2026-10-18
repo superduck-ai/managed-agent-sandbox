@@ -1,0 +1,22 @@
+{
+  "asr": {
+    "base_url": "https://example.invalid/v1",
+    "model": "REPLACE_WITH_TRANSCRIPTION_MODEL",
+    "api_key_env": "OMA_ASR_API_KEY"
+  },
+  "vision": {
+    "base_url": "https://example.invalid/v1",
+    "model": "REPLACE_WITH_VISION_MODEL",
+    "api_key_env": "OMA_VISION_API_KEY"
+  },
+  "image": {
+    "base_url": "https://example.invalid/v1",
+    "model": "REPLACE_WITH_IMAGE_MODEL",
+    "api_key_env": "OMA_IMAGE_API_KEY"
+  },
+  "speech": {
+    "base_url": "https://example.invalid/v1",
+    "model": "REPLACE_WITH_SPEECH_MODEL",
+    "api_key_env": "OMA_SPEECH_API_KEY"
+  }
+}

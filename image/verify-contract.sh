@@ -423,7 +423,7 @@ assert_output_equals "${CLAUDE_VERSION} (Claude Code)" sudo -n -H -u claude /opt
 
 [[ -x /opt/env-runner/environment-manager ]] || fail "environment-manager payload is not executable"
 [[ -L /usr/local/bin/environment-manager ]] || fail "environment-manager command is not a compatibility symlink"
-assert_output_equals '/opt/env-runner/environment-manager' readlink /usr/local/bin/environment-manager
+assert_output_equals '/opt/oma-office/environment-manager' readlink /usr/local/bin/environment-manager
 assert_output_contains "environment-runner ${ENVIRONMENT_MANAGER_VERSION}" /usr/local/bin/environment-manager --version
 assert_output_contains "environment-runner ${ENVIRONMENT_MANAGER_VERSION}" sudo -n -H -u claude /usr/local/bin/environment-manager --version
 [[ -x /opt/rclone/rclone-filestore ]] || fail "rclone-filestore payload is not executable"

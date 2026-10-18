@@ -1,0 +1,20 @@
+{
+  "mcp_servers": [
+    { "name": "slides", "type": "url", "url": "http://127.0.0.1:8765/mcp" }
+  ],
+  "tools": [
+    {
+      "type": "mcp_toolset",
+      "mcp_server_name": "slides",
+      "configs": [
+        { "name": "get_template", "enabled": true, "permission_policy": { "type": "always_ask" } },
+        { "name": "init_slides", "enabled": true, "permission_policy": { "type": "always_ask" } },
+        { "name": "organize_slides", "enabled": true, "permission_policy": { "type": "always_ask" } },
+        { "name": "write_notes", "enabled": true, "permission_policy": { "type": "always_ask" } },
+        { "name": "present", "enabled": true, "permission_policy": { "type": "always_ask" } },
+        { "name": "export", "enabled": true, "permission_policy": { "type": "always_ask" } },
+        { "name": "attach_slides", "enabled": true, "permission_policy": { "type": "always_ask" } }
+      ]
+    }
+  ]
+}

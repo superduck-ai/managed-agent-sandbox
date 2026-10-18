@@ -415,7 +415,7 @@ sandbox_verify_runtime_contract_literals() {
   sandbox_require_literal "$verifier" 'assert_writable_dir /root/.claude'
   sandbox_require_literal "$verifier" 'getent passwd claude'
   sandbox_require_literal "$verifier" 'assert_writable_dir "$shared_dir"'
-  sandbox_require_literal "$verifier" "assert_output_equals '/opt/env-runner/environment-manager' readlink /usr/local/bin/environment-manager"
+  sandbox_require_literal "$verifier" "assert_output_equals '/opt/oma-office/environment-manager' readlink /usr/local/bin/environment-manager"
   sandbox_require_literal "$verifier" 'provision-packages --protocol v1 --stdin'
   sandbox_require_literal "$verifier" 'assert_environment_manager_provisions_packages'
   sandbox_require_literal "$verifier" 'assert_environment_manager_stops_after_first_failure'
@@ -454,6 +454,11 @@ sandbox_verify_runtime_contract_literals() {
   sandbox_reject_literal "$dockerfile" 'PIP_CONFIG_FILE=/root/'
   sandbox_reject_literal "$dockerfile" 'trusted-host'
   sandbox_reject_literal "$dockerfile" 'GOSUMDB=off'
+
+  sandbox_require_literal "$dockerfile" 'COPY image/toolkit/office /opt/oma-office'
+  sandbox_require_literal "$dockerfile" 'COPY image/toolkit/runtime /opt/oma-tools'
+  sandbox_require_literal "$dockerfile" 'ln -sfn /opt/oma-office/environment-manager /usr/local/bin/environment-manager'
+  sandbox_require_literal "$SANDBOX_ROOT_DIR/scripts/lib/image-test.sh" '/usr/local/bin/verify-toolkit'
 
   sandbox_verify_curl_retry_policy "$dockerfile"
   sandbox_verify_curl_retry_policy "$workflow"

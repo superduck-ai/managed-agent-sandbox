@@ -1,0 +1,211 @@
+{
+  "system": "处理办公文件、媒体、图表与浏览器任务时，先调用 oma-office 技能，并读取与任务对应的 references 指南。按指南运行工具、打开最终产物核验后再交付。保持用户的联网、安装和事实来源限制。",
+  "mcp_servers": [
+    {
+      "name": "slides",
+      "type": "url",
+      "url": "http://127.0.0.1:8765/mcp"
+    },
+    {
+      "name": "workbench",
+      "type": "url",
+      "url": "http://127.0.0.1:8766/mcp"
+    }
+  ],
+  "tools": [
+    {
+      "type": "mcp_toolset",
+      "mcp_server_name": "slides",
+      "configs": [
+        {
+          "name": "get_template",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "init_slides",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "organize_slides",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "write_notes",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "present",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "export",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "attach_slides",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        }
+      ]
+    },
+    {
+      "type": "mcp_toolset",
+      "mcp_server_name": "workbench",
+      "configs": [
+        {
+          "name": "tools_status",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "media_probe",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "media_transform",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "speech_transcribe",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "speech_synthesize",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "image_generate_or_edit",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "video_analyze",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "diagram_render",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_view",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_tabs",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_navigate",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_open_file",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_action",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_screenshot",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_upload",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_download",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_evaluate",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_console",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        },
+        {
+          "name": "browser_close",
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_ask"
+          }
+        }
+      ]
+    }
+  ]
+}

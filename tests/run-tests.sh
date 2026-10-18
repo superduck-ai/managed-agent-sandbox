@@ -612,6 +612,8 @@ check '安全关键 ARG 不允许被删除' \
 
 # ── Shell 语法 ────────────────────────────────────────────────
 
+check '工具载荷、依赖与 Skill 打包合同' python3 "$ROOT_DIR/tests/test_toolkit.py"
+
 printf '\n# Shell 语法\n'
 SHELL_SCRIPTS=(
   "$ROOT_DIR/scripts/sandbox-image.sh"
@@ -622,6 +624,8 @@ SHELL_SCRIPTS=(
   "$ROOT_DIR/scripts/lib/image-test.sh"
   "$ROOT_DIR/image/verify-contract.sh"
   "$ROOT_DIR/tests/run-tests.sh"
+  "$ROOT_DIR/image/toolkit/verify.sh"
+  "$ROOT_DIR/image/toolkit/office/environment-manager"
 )
 for script in "${SHELL_SCRIPTS[@]}"; do
   check "bash -n $(basename "$script")" bash -n "$script"
