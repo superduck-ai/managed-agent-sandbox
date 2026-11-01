@@ -3,3 +3,6 @@
 !Dockerfile
 !versions.env
 !image
+
+**/__pycache__
+**/*.pyc

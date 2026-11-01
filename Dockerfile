@@ -606,3 +606,63 @@ LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
 
 EXPOSE 49983
 ENTRYPOINT ["/usr/bin/envd", "-isnotfc", "-port", "49983"]
+
+FROM runtime AS toolkit
+ARG PYTHON_DOCX_VERSION
+ARG OPENPYXL_VERSION
+ARG PYTHON_PPTX_VERSION
+ARG PYPDF_VERSION
+ARG PDFPLUMBER_VERSION
+ARG REPORTLAB_VERSION
+ARG PILLOW_VERSION
+ARG NUMPY_VERSION
+ARG PANDAS_VERSION
+ARG MATPLOTLIB_VERSION
+ARG MERMAID_VERSION
+ARG GH_VERSION
+ARG D2_VERSION
+ARG TYPST_VERSION
+ARG GH_URL
+ARG GH_SHA256
+ARG D2_URL
+ARG D2_SHA256
+ARG TYPST_URL
+ARG TYPST_SHA256
+ARG UBUNTU_SNAPSHOT_TIMESTAMP
+ARG PLAYWRIGHT_VERSION
+ARG FASTER_WHISPER_VERSION
+ARG REQUESTS_VERSION
+ARG AV_VERSION
+ARG CHROMIUM_REVISION
+ARG CHROMIUM_URL
+ARG CHROMIUM_SHA256
+ARG WHISPER_REVISION
+ARG WHISPER_MODEL_SHA256
+ARG WHISPER_CONFIG_SHA256
+ARG WHISPER_TOKENIZER_SHA256
+ARG WHISPER_VOCABULARY_SHA256
+ARG WHISPER_README_SHA256
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/oma-tools-browsers \
+    OMA_LOCAL_ASR_MODEL=/opt/oma-models/whisper-small
+COPY image/resources /opt/oma-resources
+COPY image/mermaid /opt/mermaid
+COPY image/resources/profile.sh /etc/profile.d/oma-toolkit.sh
+RUN --mount=type=cache,target=/var/cache/oma-resources,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    python3 -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r /opt/oma-resources/requirements.lock \
+    && python3 -m pip check \
+    && cp /etc/apt/sources.list.d/ubuntu.sources /tmp/oma-resources-ubuntu.sources \
+    && sed -i "s|^URIs:.*|URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT_TIMESTAMP}/|" /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      libreoffice-writer libreoffice-calc libreoffice-impress poppler-utils poppler-data qpdf pandoc \
+      fontconfig fonts-noto-cjk fonts-dejavu-core tesseract-ocr tesseract-ocr-chi-sim \
+      tesseract-ocr-eng ffmpeg sox imagemagick espeak-ng graphviz plantuml \
+    && python3 -m playwright install-deps chromium \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && mv /tmp/oma-resources-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources \
+    && PUPPETEER_SKIP_DOWNLOAD=true npm ci --prefix /opt/mermaid --omit=dev --ignore-scripts --no-audit --no-fund \
+    && ln -s /opt/mermaid/node_modules/.bin/mmdc /usr/local/bin/mmdc \
+    && python3 /opt/oma-resources/install.py \
+    && chmod -R a+rX /opt/oma-tools-browsers /opt/oma-models /opt/oma-resources /opt/mermaid
