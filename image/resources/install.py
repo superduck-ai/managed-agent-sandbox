@@ -23,8 +23,13 @@ def contract(path):
     return values
 
 
+MODEL_FILES = [('model.bin', 'MODEL'), ('config.json', 'CONFIG'), ('tokenizer.json', 'TOKENIZER'), ('vocabulary.txt', 'VOCABULARY'), ('README.md', 'README')]
+
+
 def digest(path):
     with Path(path).open('rb') as stream:
+        if hasattr(hashlib, 'file_digest'):
+            return hashlib.file_digest(stream, 'sha256').hexdigest()
         value = hashlib.sha256()
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             value.update(chunk)
@@ -125,7 +130,7 @@ def install(values):
     model = Path(os.environ['OMA_LOCAL_ASR_MODEL'])
     model.mkdir(parents=True, exist_ok=True)
     prefix = 'https://huggingface.co/Systran/faster-whisper-small/resolve/' + values['WHISPER_REVISION'] + '/'
-    for name, key in [('model.bin', 'MODEL'), ('config.json', 'CONFIG'), ('tokenizer.json', 'TOKENIZER'), ('vocabulary.txt', 'VOCABULARY'), ('README.md', 'README')]:
+    for name, key in MODEL_FILES:
         expected = values['WHISPER_' + key + '_SHA256']
         cached = cache / expected
         download(prefix + name, cached, expected)

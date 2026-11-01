@@ -1,6 +1,5 @@
 import hashlib
 import importlib.util
-import json
 import os
 from pathlib import Path
 import tempfile
@@ -36,8 +35,7 @@ class ResourceTests(unittest.TestCase):
             with patch.object(installer.urllib.request, 'urlopen', side_effect=AssertionError('network used')):
                 installer.download('https://invalid.example/model', target, installer.digest(target))
 
-    def test_contract_and_python_lock_agree_for_both_architectures(self):
-        locked = (ROOT / 'image/resources/requirements.lock').read_text()
+    def test_resource_contract_for_both_architectures(self):
         for machine, suffix in [('x86_64', 'AMD64'), ('aarch64', 'ARM64')]:
             with self.subTest(machine=machine), patch.object(installer.os, 'uname') as uname:
                 uname.return_value.machine = machine
@@ -46,10 +44,9 @@ class ResourceTests(unittest.TestCase):
                 self.assertIn('/' + values['CHROMIUM_REVISION'] + '/', values['CHROMIUM_URL'])
                 for name in ['CHROMIUM_SHA256', 'WHISPER_MODEL_SHA256', 'WHISPER_CONFIG_SHA256', 'WHISPER_TOKENIZER_SHA256', 'WHISPER_VOCABULARY_SHA256', 'WHISPER_README_SHA256']:
                     self.assertRegex(values[name], r'^[0-9a-f]{64}$')
-                self.assertIn('playwright==' + values['PLAYWRIGHT_VERSION'] + ' ', locked)
-                self.assertIn('faster-whisper==' + values['FASTER_WHISPER_VERSION'] + ' ', locked)
-                self.assertIn('requests==' + values['REQUESTS_VERSION'] + ' ', locked)
-                self.assertIn('av==' + values['AV_VERSION'] + ' ', locked)
+                for prefix in ['GH', 'D2', 'TYPST']:
+                    self.assertRegex(values[prefix + '_SHA256'], r'^[0-9a-f]{64}$')
+                    self.assertIn(values[prefix + '_VERSION'], values[prefix + '_URL'])
 
     def test_browser_caches_share_resources_without_overwriting_an_existing_cache(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -78,18 +75,6 @@ class ResourceTests(unittest.TestCase):
                     installer.register_browser_caches(browser, values)
                 self.assertEqual((existing / 'marker').read_text(), 'existing browser')
 
-    def test_native_tool_and_python_package_versions_match_the_locks(self):
-        with patch.object(installer.os, 'uname') as uname:
-            uname.return_value.machine = 'aarch64'
-            values = installer.contract(ROOT / 'versions.env')
-        locked = (ROOT / 'image/resources/requirements.lock').read_text()
-        for package, key in [('python-docx', 'PYTHON_DOCX_VERSION'), ('openpyxl', 'OPENPYXL_VERSION'), ('python-pptx', 'PYTHON_PPTX_VERSION'), ('pypdf', 'PYPDF_VERSION'), ('pdfplumber', 'PDFPLUMBER_VERSION'), ('reportlab', 'REPORTLAB_VERSION'), ('pillow', 'PILLOW_VERSION'), ('numpy', 'NUMPY_VERSION'), ('pandas', 'PANDAS_VERSION'), ('matplotlib', 'MATPLOTLIB_VERSION')]:
-            self.assertIn(package + '==' + values[key] + ' ', locked)
-        mermaid = json.loads((ROOT / 'image/mermaid/package.json').read_text())
-        self.assertEqual(mermaid['dependencies']['@mermaid-js/mermaid-cli'], values['MERMAID_VERSION'])
-        for prefix in ['GH', 'D2', 'TYPST']:
-            self.assertRegex(values[prefix + '_SHA256'], r'^[0-9a-f]{64}$')
-            self.assertIn(values[prefix + '_VERSION'], values[prefix + '_URL'])
 
 
 if __name__ == '__main__':

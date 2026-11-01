@@ -4,7 +4,7 @@
 
 系统包包括 LibreOffice Writer/Calc/Impress、Poppler 与 poppler-data、qpdf、Pandoc、Noto CJK/DejaVu 字体、Tesseract 中英文数据、FFmpeg、SoX、ImageMagick、eSpeak NG、Graphviz 和 PlantUML。poppler-data 用于中文 CID PDF 的 CMap 解析，不能只安装 poppler-utils。
 
-gh 2.103.3、D2 0.9.0、Typst 0.15.0 的双架构官方制品 URL 与 SHA-256 在 versions.env；Mermaid CLI 11.12.0 使用 npm 锁文件。Python 包含 python-docx、openpyxl、python-pptx、pypdf、pdfplumber、ReportLab、Pillow、NumPy、Pandas、Matplotlib、requests，版本与哈希见 versions.env 和 requirements.lock。
+gh 2.103.3、D2 0.9.0、Typst 0.15.0 的双架构官方制品 URL 与 SHA-256 在 versions.env；Mermaid CLI 11.12.0 使用 npm 锁文件。Python 包含 python-docx、openpyxl、python-pptx、pypdf、pdfplumber、ReportLab、Pillow、NumPy、Pandas、Matplotlib、requests，版本与哈希见 requirements.lock。
 
 ## 固定内容
 
@@ -23,7 +23,7 @@ gh 2.103.3、D2 0.9.0、Typst 0.15.0 的双架构官方制品 URL 与 SHA-256 �
 
 构建期下载按 SHA-256 校验；下载文件不匹配时失败，不覆盖已有文件。模型和浏览器使用 BuildKit 缓存，缓存命中仍先校验，不将未经验证的本地缓存当作有效制品。模型 README 和 Chromium 归档内附带文件随资源保留。更新资源时须同步驱动版本、归档和哈希，不单独替换浏览器。
 
-uv 可用于重新解析依赖：从 versions.env 中的全部 Python 直接依赖版本生成临时输入，再用 uv pip compile --python-version 3.13 --universal --generate-hashes 生成锁文件。锁文件允许记录传递依赖；主机测试和镜像内验证检查直接依赖与 versions.env 一致。
+uv 可用于重新解析依赖：以 requirements.lock 中的直接依赖为输入，更新所需版本后用 uv pip compile --python-version 3.13 --universal --generate-hashes 生成锁文件。锁文件记录直接和传递依赖。
 
 ## 真实运行验证
 

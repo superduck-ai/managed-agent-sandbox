@@ -1,4 +1,3 @@
-import importlib.metadata
 import json
 import os
 import shlex
@@ -11,7 +10,7 @@ from faster_whisper import WhisperModel
 import numpy as np
 from playwright.sync_api import sync_playwright
 
-from install import contract, digest
+from install import MODEL_FILES, contract, digest
 
 
 def verify_shells():
@@ -38,9 +37,6 @@ assert os.environ.get('OMA_LOCAL_ASR_MODEL') == '/opt/oma-models/whisper-small',
 def verify():
     verify_shells()
     values = contract('/etc/oma-sandbox-versions.env')
-    for package, key in [('playwright', 'PLAYWRIGHT_VERSION'), ('faster-whisper', 'FASTER_WHISPER_VERSION'), ('requests', 'REQUESTS_VERSION'), ('av', 'AV_VERSION')]:
-        if importlib.metadata.version(package) != values[key]:
-            raise ValueError(f'Unexpected {package} version')
     registry = Path(__import__('playwright').__file__).parent / 'driver/package/browsers.json'
     browsers = json.loads(registry.read_text())['browsers']
     browser = next(item for item in browsers if item['name'] == 'chromium-headless-shell')
@@ -63,7 +59,7 @@ def verify():
         finally:
             instance.close()
     model_path = Path(os.environ['OMA_LOCAL_ASR_MODEL'])
-    for name, key in [('model.bin', 'MODEL'), ('config.json', 'CONFIG'), ('tokenizer.json', 'TOKENIZER'), ('vocabulary.txt', 'VOCABULARY'), ('README.md', 'README')]:
+    for name, key in MODEL_FILES:
         if digest(model_path / name) != values['WHISPER_' + key + '_SHA256']:
             raise ValueError(f'Whisper checksum mismatch: {name}')
     model = WhisperModel(str(model_path), device='cpu', compute_type='int8', cpu_threads=2, local_files_only=True)
