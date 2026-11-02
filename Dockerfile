@@ -606,3 +606,30 @@ LABEL org.opencontainers.image.title="Open Managed Agents Sandbox Base" \
 
 EXPOSE 49983
 ENTRYPOINT ["/usr/bin/envd", "-isnotfc", "-port", "49983"]
+
+FROM runtime AS toolkit
+ARG UBUNTU_SNAPSHOT_TIMESTAMP
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/oma-tools-browsers \
+    OMA_LOCAL_ASR_MODEL=/opt/oma-models/whisper-small
+COPY image/resources /opt/oma-resources
+COPY image/mermaid /opt/mermaid
+COPY image/resources/profile.sh /etc/profile.d/oma-toolkit.sh
+RUN --mount=type=cache,target=/var/cache/oma-resources,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    python3 -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r /opt/oma-resources/requirements.lock \
+    && python3 -m pip check \
+    && cp /etc/apt/sources.list.d/ubuntu.sources /tmp/oma-resources-ubuntu.sources \
+    && sed -i "s|^URIs:.*|URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT_TIMESTAMP}/|" /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      libreoffice-writer libreoffice-calc libreoffice-impress poppler-utils poppler-data qpdf pandoc \
+      fontconfig fonts-noto-cjk fonts-dejavu-core tesseract-ocr tesseract-ocr-chi-sim \
+      tesseract-ocr-eng ffmpeg sox imagemagick espeak-ng graphviz plantuml \
+    && python3 -m playwright install-deps chromium \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && mv /tmp/oma-resources-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources \
+    && PUPPETEER_SKIP_DOWNLOAD=true npm ci --prefix /opt/mermaid --omit=dev --ignore-scripts --no-audit --no-fund \
+    && ln -s /opt/mermaid/node_modules/.bin/mmdc /usr/local/bin/mmdc \
+    && python3 /opt/oma-resources/install.py \
+    && chmod -R a+rX /opt/oma-tools-browsers /opt/oma-models /opt/oma-resources /opt/mermaid

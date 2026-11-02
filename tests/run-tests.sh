@@ -637,5 +637,7 @@ else
   printf '\n# shellcheck（未安装，跳过）\n'
 fi
 
+check '浏览器和模型资源合同与下载边界' env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT_DIR/tests/test_resources.py"
+
 printf '\n%s 个测试，%s 个失败\n' "$tests_run" "$tests_failed"
 [[ "$tests_failed" -eq 0 ]]

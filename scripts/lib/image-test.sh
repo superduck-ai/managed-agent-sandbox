@@ -91,6 +91,18 @@ sandbox_verify_image_matches_repository() {
     printf 'image runtime verifier checksum mismatch: expected %s, got %s\n' "$expected" "$image_value" >&2
     return 1
   }
+
+  local resource image_path
+  for resource in verify.py profile.sh; do
+    image_path="/opt/oma-resources/$resource"
+    [[ "$resource" != profile.sh ]] || image_path=/etc/profile.d/oma-toolkit.sh
+    expected="$(sandbox_sha256_file "$SANDBOX_ROOT_DIR/image/resources/$resource")"
+    image_value="$(sandbox_image_file_sha256 "$image_ref" "$image_path")"
+    [[ "$image_value" == "$expected" ]] || {
+      printf 'image resource checksum mismatch: %s\n' "$image_path" >&2
+      return 1
+    }
+  done
 }
 
 # envd 存活检查：启动容器后轮询 health 端点，期望 HTTP 204。
@@ -178,6 +190,8 @@ sandbox_test_image() {
   docker run --rm --platform "$SANDBOX_PLATFORM" \
     --entrypoint /usr/local/bin/verify-sandbox-contract \
     "$image_ref"
+  docker run --rm --network none -e HF_HUB_OFFLINE=1 --platform "$SANDBOX_PLATFORM" \
+    --entrypoint timeout "$image_ref" 180s python3 /opt/oma-resources/verify.py
   # envd 存活检查。
   sandbox_verify_envd_health "$image_ref"
 }
